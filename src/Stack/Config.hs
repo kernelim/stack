@@ -70,6 +70,7 @@ import           Distribution.Version (simplifyVersionRange)
 import           GHC.Conc (getNumProcessors)
 import           Network.HTTP.Client.Conduit (HasHttpManager, getHttpManager, Manager, parseUrl)
 import           Network.HTTP.Download (download, downloadJSON)
+import           Network.HTTP.Download.Cache (DownloadCache(..))
 import           Options.Applicative (Parser, strOption, long, help)
 import           Path
 import           Path.Extra (toFilePathNoTrailingSep)
@@ -142,10 +143,11 @@ getImplicitGlobalProjectDir config =
 getSnapshots :: (MonadThrow m, MonadMask m, MonadIO m, MonadReader env m, HasHttpManager env, HasConfig env, MonadLogger m)
              => m Snapshots
 getSnapshots = do
+    dc <- asks $ configDownloadCachePaths . getConfig
     latestUrlText <- askLatestSnapshotUrl
     latestUrl <- parseUrl (T.unpack latestUrlText)
     $logDebug $ "Downloading snapshot versions file from " <> latestUrlText
-    result <- downloadJSON latestUrl
+    result <- downloadJSON dc latestUrl
     $logDebug $ "Done downloading and parsing snapshot versions file"
     return result
 
@@ -307,6 +309,7 @@ configFromConfigMonoid configStackRoot configUserConfigPath mresolver mproject C
          configApplyGhcOptions = fromFirst AGOLocals configMonoidApplyGhcOptions
          configAllowNewer = fromFirst False configMonoidAllowNewer
          configDefaultTemplate = getFirst configMonoidDefaultTemplate
+         configDownloadCachePaths = DownloadCache configMonoidDownloadCachePaths
 
      configAllowDifferentUser <-
         case getFirst configMonoidAllowDifferentUser of
@@ -642,7 +645,8 @@ resolvePackageLocation menv projRoot (PLRemote url remotePackageType) = do
 
                 let fp = toFilePath file
                 req <- parseUrl $ T.unpack url
-                _ <- download req file
+                dc <- asks $ configDownloadCachePaths . getConfig
+                _ <- download req dc file
 
                 let tryTar = do
                         $logDebug $ "Trying to untar " <> T.pack fp

@@ -313,7 +313,8 @@ updateIndexHTTP indexName' index url = do
     $logInfo ("Downloading package index from " <> url)
     gz <- configPackageIndexGz indexName'
     tar <- configPackageIndex indexName'
-    wasDownloaded <- redownload req gz
+    dc <- asks $ configDownloadCachePaths . getConfig
+    wasDownloaded <- redownload req dc gz
     toUnpack <-
         if wasDownloaded
             then return True

@@ -50,6 +50,7 @@ import              Data.Typeable (Typeable)
 import              GHC.IO.Exception (IOException(..),IOErrorType(..))
 import              Network.HTTP.Client.Conduit
 import              Network.HTTP.Types.Header (hContentLength, hContentMD5)
+import              Network.HTTP.Download.Cache
 import              Path
 import              Prelude -- Fix AMP warning
 import              System.Directory
@@ -219,24 +220,34 @@ recoveringHttp retryPolicy =
 -- Throws VerifiedDownloadException.
 -- Throws IOExceptions related to file system operations.
 -- Throws HttpException.
-verifiedDownload :: (MonadReader env m, HasHttpManager env, MonadIO m, MonadLogger m)
+verifiedDownload :: (MonadReader env m, HasHttpManager env, MonadIO m, MonadLogger m, MonadThrow m)
          => DownloadRequest
+         -> DownloadCache
          -> Path Abs File -- ^ destination
          -> (Maybe Integer -> Sink ByteString (ReaderT env IO) ()) -- ^ custom hook to observe progress
          -> m Bool -- ^ Whether a download was performed
-verifiedDownload DownloadRequest{..} destpath progressSink = do
-    let req = drRequest
-    env <- ask
-    whenM' (liftIO getShouldDownload) $ do
-        $logDebug $ "Downloading " <> decodeUtf8With lenientDecode (path req)
-        liftIO $ do
-            createDirectoryIfMissing True dir
-            withBinaryFile fptmp WriteMode $ \h ->
-                recoveringHttp drRetryPolicy $
-                    flip runReaderT env $
-                        withResponse req (go h)
-            renameFile fptmp fp
+verifiedDownload DownloadRequest{..} dc destpath progressSink = do
+    hit <- cacheLookupFile dc drRequest destpath
+    b <- if hit == Nothing
+        then root
+        else return True
+    cacheSaveFile hit dc drRequest destpath
+    return b
+
   where
+    root = do
+        let req = drRequest
+        env <- ask
+        whenM' (liftIO getShouldDownload) $ do
+            $logDebug $ "Downloading " <> decodeUtf8With lenientDecode (path req)
+            liftIO $ do
+                createDirectoryIfMissing True dir
+                withBinaryFile fptmp WriteMode $ \h ->
+                    recoveringHttp drRetryPolicy $
+                        flip runReaderT env $
+                            withResponse req (go h)
+                renameFile fptmp fp
+
     whenM' mp m = do
         p <- mp
         if p then m >> return True else return False

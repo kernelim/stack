@@ -184,6 +184,7 @@ import           Distribution.Version (anyVersion)
 import           GHC.Generics (Generic)
 import           Generics.Deriving.Monoid (memptydefault, mappenddefault)
 import           Network.HTTP.Client (parseUrl)
+import           Network.HTTP.Download.Cache (DownloadCache)
 import           Path
 import qualified Paths_stack as Meta
 import           Stack.Types.BuildPlan (MiniBuildPlan(..), SnapName, renderSnapName, parseSnapName, SnapshotHash (..), trimmedSnapshotHash)
@@ -320,6 +321,7 @@ data Config =
          ,configPackageCaches       :: !(IORef (Maybe (Map PackageIdentifier (PackageIndex, PackageCache))))
          -- ^ In memory cache of hackage index.
          ,configMaybeProject        :: !(Maybe (Project, Path Abs File))
+         ,configDownloadCachePaths  :: !DownloadCache
          }
 
 -- | Which packages to ghc-options on the command line apply to?
@@ -874,6 +876,9 @@ data ConfigMonoid =
     , configMonoidAllowDifferentUser :: !(First Bool)
     -- ^ Allow users other than the stack root owner to use the stack
     -- installation.
+    ,configMonoidDownloadCachePaths  :: ![Path Abs Dir]
+    -- ^ Path from which to read cached downloads. The last path
+    --   will be used for saving.
     }
   deriving (Show, Generic)
 
@@ -929,8 +934,9 @@ parseConfigMonoidJSON obj = do
     configMonoidGhcOptions <- obj ..:? configMonoidGhcOptionsName ..!= mempty
 
     extraPath <- obj ..:? configMonoidExtraPathName ..!= []
-    configMonoidExtraPath <- forM extraPath $
-        either (fail . show) return . parseAbsDir . T.unpack
+    let parseAbsPaths =
+            either (fail . show) return . parseAbsDir . T.unpack
+    configMonoidExtraPath <- forM extraPath parseAbsPaths
 
     configMonoidSetupInfoLocations <-
         maybeToList <$> jsonSubWarningsT (obj ..:?  configMonoidSetupInfoLocationsName)
@@ -944,6 +950,9 @@ parseConfigMonoidJSON obj = do
     configMonoidAllowNewer <- First <$> obj ..:? configMonoidAllowNewerName
     configMonoidDefaultTemplate <- First <$> obj ..:? configMonoidDefaultTemplateName
     configMonoidAllowDifferentUser <- First <$> obj ..:? configMonoidAllowDifferentUserName
+
+    downloadCachePath <- obj ..:? configMonoidDownloadCachePathsName ..!= []
+    configMonoidDownloadCachePaths <- forM downloadCachePath parseAbsPaths
 
     return ConfigMonoid {..}
   where
@@ -1040,6 +1049,9 @@ configMonoidGhcOptionsName = "ghc-options"
 
 configMonoidExtraPathName :: Text
 configMonoidExtraPathName = "extra-path"
+
+configMonoidDownloadCachePathsName :: Text
+configMonoidDownloadCachePathsName = "download-cache-paths"
 
 configMonoidSetupInfoLocationsName :: Text
 configMonoidSetupInfoLocationsName = "setup-info"

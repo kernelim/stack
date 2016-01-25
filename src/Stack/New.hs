@@ -165,10 +165,11 @@ loadTemplate name logIt = do
     relRequest rel = parseUrl (defaultTemplateUrl <> "/" <> toFilePath rel)
     downloadTemplate :: Request -> Path Abs File -> m Text
     downloadTemplate req path = do
+        dc <- asks $ configDownloadCachePaths . getConfig
         logIt RemoteTemp
         _ <-
             catch
-                (redownload req path)
+                (redownload req dc path)
                 (throwM . FailedToDownloadTemplate name)
         loadLocalFile path
     backupUrlRelPath = $(mkRelFile "downloaded.template.file.hsfiles")
