@@ -30,6 +30,7 @@ import           Control.Monad.Catch         (MonadThrow, MonadMask, throwM)
 import           Control.Monad.IO.Class      (MonadIO, liftIO)
 import           Control.Monad.Reader        (MonadReader, ReaderT, ask,
                                               runReaderT)
+import qualified Data.Aeson                  as A
 import           Data.Aeson.Extended         (FromJSON, parseJSON)
 import           Data.Aeson.Parser           (json')
 import           Data.Aeson.Types            (parseEither)
@@ -48,6 +49,7 @@ import           Network.HTTP.Client.Conduit (HasHttpManager, Manager, Request,
                                               responseHeaders, responseStatus,
                                               withResponse)
 import           Network.HTTP.Download.Verified
+import           Network.HTTP.Download.Cache
 import           Network.HTTP.Types          (status200, status304)
 import           Path                        (Abs, File, Path, toFilePath)
 import           System.Directory            (createDirectoryIfMissing,
@@ -64,11 +66,13 @@ import           System.IO                   (IOMode (ReadMode),
 -- appropriate destination.
 --
 -- Throws an exception if things go wrong
-download :: (MonadReader env m, HasHttpManager env, MonadIO m)
+download :: (MonadReader env m, HasHttpManager env, MonadIO m,
+             MonadThrow m)
          => Request
+         -> DownloadCache
          -> Path Abs File -- ^ destination
          -> m Bool -- ^ Was a downloaded performed (True) or did the file already exist (False)?
-download req destpath = do
+download req dc destpath = do
     let downloadReq = DownloadRequest
             { drRequest = req
             , drHashChecks = []
@@ -76,16 +80,27 @@ download req destpath = do
             , drRetryPolicy = drRetryPolicyDefault
             }
     let progressHook _ = return ()
-    verifiedDownload downloadReq destpath progressHook
+    verifiedDownload downloadReq dc destpath progressHook
 
 -- | Same as 'download', but will download a file a second time if it is already present.
 --
 -- Returns 'True' if the file was downloaded, 'False' otherwise
-redownload :: (MonadReader env m, HasHttpManager env, MonadIO m)
+redownload :: (MonadReader env m, HasHttpManager env, MonadIO m,
+               MonadThrow m)
            => Request
+           -> DownloadCache
            -> Path Abs File -- ^ destination
            -> m Bool
-redownload req0 dest = do
+redownload req0 dc dest = do
+    hit <- cacheLookupFile dc req0 dest
+    b <- if hit == Nothing
+        then root
+        else return True
+    cacheSaveFile hit dc req0 dest
+    return b
+
+ where
+  root = do
     let destFilePath = toFilePath dest
         etagFilePath = destFilePath <.> "etag"
 
@@ -130,15 +145,23 @@ redownload req0 dest = do
 
 -- | Download a JSON value and parse it using a 'FromJSON' instance.
 downloadJSON :: (FromJSON a, MonadReader env m, HasHttpManager env, MonadIO m, MonadThrow m, MonadMask m)
-             => Request
+             => DownloadCache
+             -> Request
              -> m a
-downloadJSON req = do
-    val <- recoveringHttp drRetryPolicyDefault $
-        liftHTTP $ withResponse req $ \res ->
-            responseBody res $$ sinkParser json'
-    case parseEither parseJSON val of
-        Left e -> throwM $ DownloadJSONException req e
-        Right x -> return x
+downloadJSON dc req = do
+    hit <- cacheLookupData dc req
+    case hit of
+       Nothing -> do
+            val <- recoveringHttp drRetryPolicyDefault $
+                liftHTTP $ withResponse req $ \res ->
+                    responseBody res $$ sinkParser json'
+            case parseEither parseJSON val of
+                Left e -> throwM $ DownloadJSONException req e
+                Right x -> return x
+       Just b -> do
+           case A.eitherDecode $ L.fromChunks [ b ] of
+               Left e -> throwM $ DownloadJSONException req e
+               Right x -> return x
 
 data DownloadException
     = DownloadJSONException Request String

@@ -61,7 +61,8 @@ library
                      Data.IORef.RunOnce
                      Data.Maybe.Extra
                      Distribution.Version.Extra
-                     Network.HTTP.Download
+                     Network.HTTP.Download 
+                     Network.HTTP.Download.Cache
                      Network.HTTP.Download.Verified
                      Options.Applicative.Args
                      Options.Applicative.Builder.Extra

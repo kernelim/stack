@@ -65,6 +65,7 @@ import           Distribution.Text (simpleParse)
 import           Lens.Micro (set)
 import           Network.HTTP.Client.Conduit
 import           Network.HTTP.Download.Verified
+import           Network.HTTP.Download.Cache
 import           Path
 import           Path.Extra (toFilePathNoTrailingSep)
 import           Path.IO hiding (findExecutable)
@@ -585,13 +586,20 @@ getSetupInfo stackSetupYaml manager = do
         bs <-
             case parseUrl urlOrFile of
                 Just req -> do
-                    bss <-
-                        liftIO $
-                        flip runReaderT manager $
-                        withResponse req $
-                        \res ->
-                             responseBody res $$ CL.consume
-                    return $ S8.concat bss
+                    dc <- asks $ configDownloadCachePaths . getConfig
+                    hit <- cacheLookupData dc req
+                    case hit of
+                        Nothing -> do
+                            bs <- fmap S8.concat $
+                                liftIO $
+                                flip runReaderT manager $
+                                withResponse req $
+                                \res ->
+                                     responseBody res $$ CL.consume
+                            cacheSaveData Nothing dc req bs
+                            return bs
+                        Just b -> do
+                            return b
                 Nothing -> liftIO $ S.readFile urlOrFile
         WithJSONWarnings si warnings <- either throwM return (Yaml.decodeEither' bs)
         when (urlOrFile /= defaultStackSetupYaml) $
@@ -1187,7 +1195,8 @@ setup7z si = do
                     $ liftIO $ throwM (ProblemWhileDecompressing archive)
         _ -> throwM SetupInfoMissingSevenz
 
-chattyDownload :: (MonadReader env m, HasHttpManager env, MonadIO m, MonadLogger m, MonadThrow m, MonadBaseControl IO m)
+chattyDownload :: (MonadReader env m, HasHttpManager env, MonadIO m, MonadLogger m, MonadThrow m, MonadBaseControl IO m,
+                   HasConfig env)
                => Text          -- ^ label
                -> DownloadInfo  -- ^ URL, content-length, and sha1
                -> Path Abs File -- ^ destination
@@ -1228,7 +1237,8 @@ chattyDownload label downloadInfo path = do
             , drRetryPolicy = drRetryPolicyDefault
             }
     runInBase <- liftBaseWith $ \run -> return (void . run)
-    x <- verifiedDownload dReq path (chattyDownloadProgress runInBase)
+    dc <- asks $ configDownloadCachePaths . getConfig
+    x <- verifiedDownload dReq dc path (chattyDownloadProgress runInBase)
     if x
         then $logStickyDone ("Downloaded " <> label <> ".")
         else $logStickyDone "Already downloaded."
