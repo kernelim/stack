@@ -68,6 +68,7 @@ import           Distribution.Version (simplifyVersionRange)
 import           GHC.Conc (getNumProcessors)
 import           Network.HTTP.Client.Conduit (HasHttpManager, getHttpManager, Manager, parseUrl)
 import           Network.HTTP.Download (download, downloadJSON)
+import           Network.HTTP.Download.Cache (DownloadCache(..))
 import           Options.Applicative (Parser, strOption, long, help)
 import           Path
 import           Path.Extra (toFilePathNoTrailingSep)
@@ -137,7 +138,8 @@ getImplicitGlobalProjectDir config =
 -- | Download the 'Snapshots' value from stackage.org.
 getSnapshots :: (MonadThrow m, MonadIO m, MonadReader env m, HasHttpManager env, HasStackRoot env, HasConfig env)
              => m Snapshots
-getSnapshots = askLatestSnapshotUrl >>= parseUrl . T.unpack >>= downloadJSON
+getSnapshots = do dc <- asks $ configDownloadCachePaths . getConfig
+                  askLatestSnapshotUrl >>= parseUrl . T.unpack >>= downloadJSON dc
 
 -- | Turn an 'AbstractResolver' into a 'Resolver'.
 makeConcreteResolver :: (MonadIO m, MonadReader env m, HasConfig env, MonadThrow m, HasHttpManager env, MonadLogger m)
@@ -295,6 +297,7 @@ configFromConfigMonoid configStackRoot configUserConfigPath mresolver mproject c
          configApplyGhcOptions = fromMaybe AGOLocals configMonoidApplyGhcOptions
          configAllowNewer = fromMaybe False configMonoidAllowNewer
          configDefaultTemplate = configMonoidDefaultTemplate
+         configDownloadCachePaths = DownloadCache configMonoidDownloadCachePaths
 
      configAllowDifferentUser <-
         case configMonoidAllowDifferentUser of
@@ -594,7 +597,8 @@ resolvePackageLocation menv projRoot (PLRemote url remotePackageType) = do
             RPTHttp -> do
                 let fp = toFilePath file
                 req <- parseUrl $ T.unpack url
-                _ <- download req file
+                dc <- asks $ configDownloadCachePaths . getConfig
+                _ <- download req dc file
 
                 let tryTar = do
                         $logDebug $ "Trying to untar " <> T.pack fp

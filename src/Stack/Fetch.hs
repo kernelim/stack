@@ -64,6 +64,7 @@ import           Data.Text.Encoding             (decodeUtf8)
 import           Data.Typeable                  (Typeable)
 import           Data.Word                      (Word64)
 import           Network.HTTP.Download
+import           Network.HTTP.Download.Cache    (DownloadCache)
 import           Path
 import           Path.IO
 import           Prelude -- Fix AMP warning
@@ -429,20 +430,23 @@ fetchPackages' mdistDir toFetchAll = do
     outputVar <- liftIO $ newTVarIO Map.empty
 
     runInBase <- liftBaseWith $ \run -> return (void . run)
+    dc <- asks $ configDownloadCachePaths . getConfig
     parMapM_
         connCount
-        (go outputVar runInBase)
+        (go outputVar dc runInBase)
         (Map.toList toFetchAll)
 
     liftIO $ readTVarIO outputVar
   where
     go :: (MonadIO m,Functor m,MonadThrow m,MonadLogger m,MonadReader env m,HasHttpManager env)
        => TVar (Map PackageIdentifier (Path Abs Dir))
+       -> DownloadCache
        -> (m () -> IO ())
        -> (PackageIdentifier, ToFetch)
        -> m ()
-    go outputVar runInBase (ident, toFetch) = do
+    go outputVar dc runInBase (ident, toFetch) = do
         req <- parseUrl $ T.unpack $ tfUrl toFetch
+
         let destpath = tfTarball toFetch
 
         let toHashCheck bs = HashCheck SHA512 (CheckHexDigestByteString bs)
@@ -454,7 +458,7 @@ fetchPackages' mdistDir toFetchAll = do
                 }
         let progressSink _ =
                 liftIO $ runInBase $ $logInfo $ packageIdentifierText ident <> ": download"
-        _ <- verifiedDownload downloadReq destpath progressSink
+        _ <- verifiedDownload downloadReq dc destpath progressSink
 
         let fp = toFilePath destpath
 

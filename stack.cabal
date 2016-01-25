@@ -62,6 +62,7 @@ library
                      Data.Set.Monad
                      Distribution.Version.Extra
                      Network.HTTP.Download 
+                     Network.HTTP.Download.Cache
                      Network.HTTP.Download.Verified
                      Options.Applicative.Args
                      Options.Applicative.Builder.Extra

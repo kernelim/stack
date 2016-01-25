@@ -434,7 +434,8 @@ buildPlanFixes mbp = mbp
 
 -- | Load the 'BuildPlan' for the given snapshot. Will load from a local copy
 -- if available, otherwise downloading from Github.
-loadBuildPlan :: (MonadIO m, MonadThrow m, MonadLogger m, MonadReader env m, HasHttpManager env, HasStackRoot env)
+loadBuildPlan :: (MonadIO m, MonadThrow m, MonadLogger m, MonadReader env m, HasHttpManager env, HasStackRoot env,
+                  HasConfig env)
               => SnapName
               -> m BuildPlan
 loadBuildPlan name = do
@@ -450,9 +451,10 @@ loadBuildPlan name = do
             $logDebug $ "Decoding build plan from file failed: " <> T.pack (show e)
             ensureDir (parent fp)
             req <- parseUrl $ T.unpack url
+            dc <- asks $ configDownloadCachePaths . getConfig
             $logSticky $ "Downloading " <> renderSnapName name <> " build plan ..."
             $logDebug $ "Downloading build plan from: " <> url
-            _ <- redownload req { checkStatus = handle404 } fp
+            _ <- redownload req { checkStatus = handle404 } dc fp
             $logStickyDone $ "Downloaded " <> renderSnapName name <> " build plan."
             liftIO (decodeFileEither $ toFilePath fp) >>= either throwM return
 
@@ -914,9 +916,10 @@ parseCustomMiniBuildPlan stackYamlFP url0 = do
         let hashStr = S8.unpack $ B16.encode $ SHA256.hash $ encodeUtf8 url
         hashFP <- parseRelFile $ hashStr ++ ".yaml"
         customPlanDir <- getCustomPlanDir
+        dc <- asks $ configDownloadCachePaths . getConfig
 
         let cacheFP = customPlanDir </> $(mkRelDir "yaml") </> hashFP
-        _ <- download req cacheFP
+        _ <- download req dc cacheFP
         return cacheFP
 
     getYamlFPFromFile url = do
