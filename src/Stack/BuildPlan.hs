@@ -20,6 +20,7 @@ module Stack.BuildPlan
     , gpdPackageName
     , MiniBuildPlan(..)
     , MiniPackageInfo(..)
+    , loadBuildPlan
     , loadMiniBuildPlan
     , removeSrcPkgDefaultFlags
     , resolveBuildPlan

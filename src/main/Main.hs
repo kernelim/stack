@@ -58,6 +58,7 @@ import           Path.IO
 import qualified Paths_stack as Meta
 import           Prelude hiding (pi, mapM)
 import           Stack.Build
+import           Stack.BuildPlan (loadBuildPlan)
 import           Stack.Clean (CleanOpts, clean)
 import           Stack.Config
 import           Stack.ConfigCmd as ConfigCmd
@@ -355,6 +356,10 @@ commandLineHandler progName isInterpreter = complicatedOptions
                                        "and package version.") <>
                                  value " " <>
                                  showDefault))
+        addCommand' "list-build-plan"
+                    "List all package names in the build plan"
+                    listBuildplanCmd
+                    (pure ())
         addCommand' "query"
                     "Query general build information (experimental)"
                     queryCmd
@@ -1259,6 +1264,15 @@ listDependenciesCmd sep go = withBuildConfig go (listDependencies sep')
 -- | Query build information
 queryCmd :: [String] -> GlobalOpts -> IO ()
 queryCmd selectors go = withBuildConfig go $ queryBuildInfo $ map T.pack selectors
+
+listBuildplanCmd :: () -> GlobalOpts -> IO ()
+listBuildplanCmd _ go = withBuildConfig go $ do
+    bconfig <- asks getBuildConfig
+    case bcResolver bconfig of
+        ResolverSnapshot snapName -> do
+            buildPlan <- loadBuildPlan snapName
+            forM_ (Map.keys $ bpPackages buildPlan) $ \x -> liftIO $ T.putStrLn (packageNameText x)
+        _ -> return ()
 
 -- | Generate a combined HPC report
 hpcReportCmd :: HpcReportOpts -> GlobalOpts -> IO ()
