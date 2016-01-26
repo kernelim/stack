@@ -227,7 +227,8 @@ setupEnv mResolveMissingGHC = do
             { envConfigBuildConfig = bconfig
             , envConfigCabalVersion = cabalVer
             , envConfigCompilerVersion = compilerVer
-            , envConfigPackages = Map.fromList $ concat packages
+            , envConfigPackages = Map.fromList $ concat $ map fst packages
+            , envConfigDownloads = catMaybes $ map snd $ packages
             }
 
     -- extra installation bin directories
@@ -300,6 +301,7 @@ setupEnv mResolveMissingGHC = do
         , envConfigCabalVersion = cabalVer
         , envConfigCompilerVersion = compilerVer
         , envConfigPackages = envConfigPackages envConfig0
+        , envConfigDownloads = envConfigDownloads envConfig0
         }
 
 -- | Add the include and lib paths to the given Config

@@ -498,7 +498,8 @@ data EnvConfig = EnvConfig
     {envConfigBuildConfig :: !BuildConfig
     ,envConfigCabalVersion :: !Version
     ,envConfigCompilerVersion :: !CompilerVersion
-    ,envConfigPackages   :: !(Map (Path Abs Dir) Bool)}
+    ,envConfigPackages   :: !(Map (Path Abs Dir) Bool)
+    ,envConfigDownloads  :: ![Path Abs File]}
 instance HasBuildConfig EnvConfig where
     getBuildConfig = envConfigBuildConfig
 instance HasConfig EnvConfig

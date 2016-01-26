@@ -347,6 +347,10 @@ commandLineHandler progName isInterpreter = complicatedOptions
                     "List all package names in the build plan"
                     listBuildplanCmd
                     (pure ())
+        addCommand' "list-archive-downloads"
+                    "Download and list archives"
+                    listArchiveDownloadsCmd
+                    (pure ())
         addCommand' "query"
                     "Query general build information (experimental)"
                     queryCmd
@@ -1207,6 +1211,13 @@ dotCmd dotOpts go = withBuildConfigAndLock go (\_ -> dot dotOpts)
 listDependenciesCmd :: Text -> GlobalOpts -> IO ()
 listDependenciesCmd sep go = withBuildConfig go (listDependencies sep')
   where sep' = T.replace "\\t" "\t" (T.replace "\\n" "\n" sep)
+
+-- | Save locations
+listArchiveDownloadsCmd :: () -> GlobalOpts -> IO ()
+listArchiveDownloadsCmd _ go = withBuildConfig go $ do
+    econfig <- asks getEnvConfig
+    forM_ (envConfigDownloads econfig) $ \path -> do
+        liftIO $ putStrLn $ toFilePath path
 
 -- | Query build information
 queryCmd :: [String] -> GlobalOpts -> IO ()

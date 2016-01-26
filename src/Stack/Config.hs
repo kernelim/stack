@@ -535,9 +535,9 @@ resolvePackageEntry
     => EnvOverride
     -> Path Abs Dir -- ^ project root
     -> PackageEntry
-    -> m [(Path Abs Dir, Bool)]
+    -> m ([(Path Abs Dir, Bool)], Maybe (Path Abs File))
 resolvePackageEntry menv projRoot pe = do
-    entryRoot <- resolvePackageLocation menv projRoot (peLocation pe)
+    (entryRoot, maybeDownloadedFile) <- resolvePackageLocation menv projRoot (peLocation pe)
     paths <-
         case peSubdirs pe of
             [] -> return [entryRoot]
@@ -545,7 +545,7 @@ resolvePackageEntry menv projRoot pe = do
     case peValidWanted pe of
         Nothing -> return ()
         Just _ -> $logWarn "Warning: you are using the deprecated valid-wanted field. You should instead use extra-dep. See: http://docs.haskellstack.org/en/stable/yaml_configuration/#packages"
-    return $ map (, not $ peExtraDep pe) paths
+    return $ (map (, not $ peExtraDep pe) paths, maybeDownloadedFile)
 
 -- | Resolve a PackageLocation into a path, downloading and cloning as
 -- necessary.
@@ -555,8 +555,10 @@ resolvePackageLocation
     => EnvOverride
     -> Path Abs Dir -- ^ project root
     -> PackageLocation
-    -> m (Path Abs Dir)
-resolvePackageLocation _ projRoot (PLFilePath fp) = resolveDir projRoot fp
+    -> m (Path Abs Dir, Maybe (Path Abs File))
+resolvePackageLocation _ projRoot (PLFilePath fp) = do
+    x <- resolveDir projRoot fp
+    return (x, Nothing)
 resolvePackageLocation menv projRoot (PLRemote url remotePackageType) = do
     workDir <- getWorkDir
     let nameBeforeHashing = case remotePackageType of
@@ -628,12 +630,12 @@ resolvePackageLocation menv projRoot (PLRemote url remotePackageType) = do
     case remotePackageType of
         RPTHttp -> do x <- listDir dir
                       case x of
-                          ([dir'], []) -> return dir'
+                          ([dir'], []) -> return (dir', Just file)
                           (dirs, files) -> do
                               ignoringAbsence (removeFile file)
                               ignoringAbsence (removeDirRecur dir)
                               throwM $ UnexpectedArchiveContents dirs files
-        _ -> return dir
+        _ -> return (dir, Nothing)
 
 -- | Get the stack root, e.g. @~/.stack@, and determine whether the user owns it.
 --
