@@ -557,14 +557,14 @@ resolvePackageEntry
     => EnvOverride
     -> Path Abs Dir -- ^ project root
     -> PackageEntry
-    -> m [(Path Abs Dir, TreatLikeExtraDep)]
+    -> m ([(Path Abs Dir, TreatLikeExtraDep)], Maybe (Path Abs File))
 resolvePackageEntry menv projRoot pe = do
-    entryRoot <- resolvePackageLocation menv projRoot (peLocation pe)
+    (entryRoot, maybeDownloadedFile) <- resolvePackageLocation menv projRoot (peLocation pe)
     paths <-
         case peSubdirs pe of
             [] -> return [entryRoot]
             subs -> mapM (resolveDir entryRoot) subs
-    return $ map (, peExtraDep pe) paths
+    return $ (map (, peExtraDep pe) paths, maybeDownloadedFile)
 
 -- | Resolve a PackageLocation into a path, downloading and cloning as
 -- necessary.
@@ -574,8 +574,10 @@ resolvePackageLocation
     => EnvOverride
     -> Path Abs Dir -- ^ project root
     -> PackageLocation
-    -> m (Path Abs Dir)
-resolvePackageLocation _ projRoot (PLFilePath fp) = resolveDir projRoot fp
+    -> m (Path Abs Dir, Maybe (Path Abs File))
+resolvePackageLocation _ projRoot (PLFilePath fp) = do
+    x <- resolveDir projRoot fp
+    return (x, Nothing)
 resolvePackageLocation menv projRoot (PLRemote url remotePackageType) = do
     -- NOTE: we used to include the commit in the package location. This
     -- allowed us to quickly check if the dir exists, and use it if it
@@ -607,7 +609,7 @@ resolvePackageLocation menv projRoot (PLRemote url remotePackageType) = do
                 else do
                     doClone
                     doReset False
-            return dir
+            return (dir, Nothing)
           where
             handleError = handle $ \case
                 ReadProcessException{} -> do
@@ -670,7 +672,7 @@ resolvePackageLocation menv projRoot (PLRemote url remotePackageType) = do
                 renameDir dirTmp dir
             x <- listDir dir
             case x of
-                ([dir'], []) -> return dir'
+                ([dir'], []) -> return (dir', Just file)
                 (dirs, files) -> do
                     ignoringAbsence (removeFile file)
                     ignoringAbsence (removeDirRecur dir)
