@@ -203,8 +203,9 @@ cleanOptsParser = CleanShallow <$> packages <|> doFullClean
 -- | Command-line arguments parser for configuration.
 configOptsParser :: GlobalOptsContext -> Parser ConfigMonoid
 configOptsParser hide0 =
-    (\stackRoot workDir buildOpts dockerOpts nixOpts systemGHC installGHC arch os ghcVariant jobs includes libs skipGHCCheck skipMsys localBin modifyCodePage allowDifferentUser -> mempty
+    (\stackRoot stackSystemRoot workDir buildOpts dockerOpts nixOpts systemGHC installGHC arch os ghcVariant jobs includes libs skipGHCCheck skipMsys localBin modifyCodePage allowDifferentUser -> mempty
         { configMonoidStackRoot = stackRoot
+        , configMonoidStackSystemRoot = stackSystemRoot
         , configMonoidWorkDir = workDir
         , configMonoidBuildOpts = buildOpts
         , configMonoidDockerOpts = dockerOpts
@@ -228,6 +229,13 @@ configOptsParser hide0 =
             <> metavar (map toUpper stackRootOptionName)
             <> help ("Absolute path to the global stack root directory " ++
                      "(Overrides any STACK_ROOT environment variable)")
+            <> hide
+            ))
+    <*> optionalFirst (strOption
+            ( long stackSystemRootOptionName
+            <> metavar (map toUpper stackSystemRootOptionName)
+            <> help ("Absolute path to the system stack root directory " ++
+                     "(Overrides any STACK_SYSTEM_ROOT environment variable)")
             <> hide
             ))
     <*> optionalFirst (strOption

@@ -36,6 +36,8 @@ import qualified Data.Binary as Binary (encode)
 import           Data.Binary.VersionTagged
 import qualified Data.ByteString.Char8 as S8
 import qualified Data.ByteString.Base16 as B16
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map (Map)
 import           Data.Maybe (fromMaybe, mapMaybe)
 import           Data.Monoid ((<>))
@@ -51,24 +53,25 @@ import           Stack.Constants
 import           Stack.Types
 
 -- | Directory containing files to mark an executable as installed
-exeInstalledDir :: (MonadReader env m, HasEnvConfig env, MonadThrow m)
-                => InstallLocation -> m (Path Abs Dir)
-exeInstalledDir Snap = (</> $(mkRelDir "installed-packages")) `liftM` installationRootDeps
-exeInstalledDir Local = (</> $(mkRelDir "installed-packages")) `liftM` installationRootLocal
+exeInstalledDirs :: (MonadReader env m, HasEnvConfig env, MonadThrow m)
+                => InstallLocation -> m (NonEmpty (Path Abs Dir))
+exeInstalledDirs Snap = (NE.map (</> $(mkRelDir "installed-packages"))) `liftM` installationRootDeps
+exeInstalledDirs Local = (NE.map (</> $(mkRelDir "installed-packages"))) `liftM` (fmap (NE.:| []) installationRootLocal)
 
 -- | Get all of the installed executables
 getInstalledExes :: (MonadReader env m, HasEnvConfig env, MonadIO m, MonadThrow m)
                  => InstallLocation -> m [PackageIdentifier]
 getInstalledExes loc = do
-    dir <- exeInstalledDir loc
-    (_, files) <- liftIO $ handleIO (const $ return ([], [])) $ listDir dir
-    return $ mapMaybe (parsePackageIdentifierFromString . toFilePath . filename) files
+    dirs <- exeInstalledDirs loc
+    fmap concat $ forM (NE.toList dirs) $ \dir -> do
+        (_, files) <- liftIO $ handleIO (const $ return ([], [])) $ listDir dir
+        return $ mapMaybe (parsePackageIdentifierFromString . toFilePath . filename) files
 
 -- | Mark the given executable as installed
 markExeInstalled :: (MonadReader env m, HasEnvConfig env, MonadIO m, MonadThrow m)
                  => InstallLocation -> PackageIdentifier -> m ()
 markExeInstalled loc ident = do
-    dir <- exeInstalledDir loc
+    dir NE.:| _ <- exeInstalledDirs loc
     ensureDir dir
     ident' <- parseRelFile $ packageIdentifierString ident
     let fp = toFilePath $ dir </> ident'
@@ -81,7 +84,7 @@ markExeInstalled loc ident = do
 markExeNotInstalled :: (MonadReader env m, HasEnvConfig env, MonadIO m, MonadCatch m)
                     => InstallLocation -> PackageIdentifier -> m ()
 markExeNotInstalled loc ident = do
-    dir <- exeInstalledDir loc
+    dir NE.:| _ <- exeInstalledDirs loc
     ident' <- parseRelFile $ packageIdentifierString ident
     ignoringAbsence (removeFile $ dir </> ident')
 
@@ -296,7 +299,7 @@ writePrecompiledCache baseConfigOpts pkgident copts depIDs mghcPkgId exes = do
             Executable _ -> return Nothing
             Library _ ipid -> liftM Just $ do
                 ipid' <- parseRelFile $ ghcPkgIdString ipid ++ ".conf"
-                return $ toFilePath $ bcoSnapDB baseConfigOpts </> ipid'
+                return $ toFilePath $ NE.head (bcoSnapDBs baseConfigOpts) </> ipid'
     exes' <- forM (Set.toList exes) $ \exe -> do
         name <- parseRelFile $ T.unpack exe
         return $ toFilePath $ bcoSnapInstallRoot baseConfigOpts </> bindirSuffix </> name

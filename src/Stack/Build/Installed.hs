@@ -24,6 +24,7 @@ import           Data.Function
 import qualified Data.Foldable                as F
 import qualified Data.HashSet                 as HashSet
 import           Data.List
+import qualified Data.List.NonEmpty           as NE
 import           Data.Map.Strict              (Map)
 import qualified Data.Map.Strict              as M
 import qualified Data.Map.Strict              as Map
@@ -64,7 +65,7 @@ getInstalled :: (M env m, PackageInstallInfo pii)
                   , [DumpPackage () ()] -- locally installed
                   )
 getInstalled menv opts sourceMap = do
-    snapDBPath <- packageDatabaseDeps
+    snapDBPaths <- packageDatabaseDeps
     localDBPath <- packageDatabaseLocal
     extraDBPaths <- packageDatabaseExtra
 
@@ -78,12 +79,13 @@ getInstalled menv opts sourceMap = do
     let loadDatabase' = loadDatabase menv opts mcache sourceMap
 
     (installedLibs0, globalDumpPkgs) <- loadDatabase' Nothing []
-    (installedLibs1, _extraInstalled) <-
-      (foldM (\lhs' pkgdb ->
-        loadDatabase' (Just (ExtraGlobal, pkgdb)) (fst lhs')
-        ) (installedLibs0, globalDumpPkgs) extraDBPaths)
-    (installedLibs2, snapshotDumpPkgs) <-
-        loadDatabase' (Just (InstalledTo Snap, snapDBPath)) installedLibs1
+    let loadDatabaseFoldM prev paths = foldM (\lhs' pkgdb ->
+                loadDatabase' (Just (ExtraGlobal, pkgdb)) (fst lhs')
+            ) prev paths
+    (installedLibs1, _extraInstalled) <- loadDatabaseFoldM
+        (installedLibs0, globalDumpPkgs) extraDBPaths
+    (installedLibs2, snapshotDumpPkgs) <- loadDatabaseFoldM
+        (installedLibs1, _extraInstalled) (NE.toList snapDBPaths)
     (installedLibs3, localDumpPkgs) <-
         loadDatabase' (Just (InstalledTo Local, localDBPath)) installedLibs2
     let installedLibs = M.fromList $ map lhPair installedLibs3

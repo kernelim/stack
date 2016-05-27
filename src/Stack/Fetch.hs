@@ -9,6 +9,7 @@
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE PackageImports        #-}
 {-# LANGUAGE ViewPatterns          #-}
+{-# LANGUAGE LambdaCase            #-}
 
 -- | Functionality for downloading packages securely for cabal's usage.
 
@@ -264,9 +265,23 @@ withCabalFiles
     -> (PackageIdentifier -> a -> ByteString -> IO b)
     -> m [b]
 withCabalFiles name pkgs f = do
-    indexPath <- configPackageIndex name
-    mgitRepo <- configPackageIndexRepo name
-    bracket
+    indexPathLst <- configPackageIndex name
+    mgitRepoLst <- configPackageIndexRepo name
+    iter (NE.zip indexPathLst mgitRepoLst)
+  where
+    iter ((indexPath, mgitRepo) NE.:| lst) = do
+        gitRepoE <-
+            case mgitRepo of
+                Just gitRepo -> doesDirExist gitRepo
+                Nothing      -> return True
+        indexE <- doesFileExist indexPath
+        case (indexE && gitRepoE, lst) of
+            (True, _)       -> onOneIndex indexPath mgitRepo
+            (False, (x:xs)) -> iter (x NE.:| xs)
+            (False, [])     -> return []
+
+    onOneIndex indexPath mgitRepo = do
+      bracket
         (liftIO $ openBinaryFile (toFilePath indexPath) ReadMode)
         (liftIO . hClose) $ \h ->
             let inner mgit = mapM (goPkg h mgit) pkgs
@@ -278,7 +293,7 @@ withCabalFiles name pkgs f = do
                                 $ toFilePath repo FP.</> ".git")
                         (liftIO . Git.closeRepo)
                         (inner . Just)
-  where
+
     goPkg h (Just git) (ident, pc, Just (GitSHA1 sha), tf) = do
         let ref = Git.fromHex sha
         mobj <- liftIO $ tryIO $ Git.getObject git ref True
@@ -431,17 +446,23 @@ getToFetch mdest resolvedAll = do
                 let index = rpIndex resolved
                     d = pcDownload $ rpCache resolved
                     targz = T.pack $ packageIdentifierString ident ++ ".tar.gz"
-                tarball <- configPackageTarball (indexName index) ident
-                return $ Left (indexName index, [(ident, rpCache resolved, rpGitSHA1 resolved, ToFetch
-                    { tfTarball = tarball
-                    , tfDestDir = mdestDir
-                    , tfUrl = case d of
-                        Just d' -> decodeUtf8 $ pdUrl d'
-                        Nothing -> indexDownloadPrefix index <> targz
-                    , tfSize = fmap pdSize d
-                    , tfSHA512 = fmap pdSHA512 d
-                    , tfCabal = S.empty -- filled in by goIndex
-                    })])
+                localTarball NE.:| systemTarball <- configPackageTarball (indexName index) ident
+                let go tarball =
+                      return $ Left (indexName index, [(ident, rpCache resolved, rpGitSHA1 resolved, ToFetch
+                          { tfTarball = tarball
+                          , tfDestDir = mdestDir
+                          , tfUrl = case d of
+                              Just d' -> decodeUtf8 $ pdUrl d'
+                              Nothing -> indexDownloadPrefix index <> targz
+                          , tfSize = fmap pdSize d
+                          , tfSHA512 = fmap pdSHA512 d
+                          , tfCabal = S.empty -- filled in by goIndex
+                          })])
+                case systemTarball of
+                    [] -> go localTarball
+                    (x:_) -> doesFileExist x >>= \case
+                                True -> go x
+                                False -> go localTarball
 
     goIndex (name, pkgs) =
         liftM Map.fromList $

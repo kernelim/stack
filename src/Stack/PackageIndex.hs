@@ -52,6 +52,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Monoid
+import qualified Data.List.NonEmpty as NE
 import           Data.Text (Text)
 import qualified Data.Text as T
 import           Data.Text.Unsafe (unsafeTail)
@@ -87,7 +88,7 @@ populateCache menv index = do
     requireIndex menv index
     -- This uses full on lazy I/O instead of ResourceT to provide some
     -- protections. Caveat emptor
-    path <- configPackageIndex (indexName index)
+    path NE.:| _ <- configPackageIndex (indexName index)
     let loadPIS = do
             $logSticky "Populating index cache ..."
             lbs <- liftIO $ L.readFile $ Path.toFilePath path
@@ -192,7 +193,7 @@ requireIndex :: (MonadIO m,MonadLogger m
              -> PackageIndex
              -> m ()
 requireIndex menv index = do
-    tarFile <- configPackageIndex $ indexName index
+    tarFile NE.:| _ <- configPackageIndex $ indexName index
     exists <- doesFileExist tarFile
     unless exists $ updateIndex menv index
 
@@ -233,7 +234,7 @@ updateIndexGit :: (MonadIO m,MonadLogger m,MonadReader env m,HasConfig env,Monad
                -> Text -- ^ Git URL
                -> m ()
 updateIndexGit menv indexName' index gitUrl = do
-     tarFile <- configPackageIndex indexName'
+     tarFile NE.:| _ <- configPackageIndex indexName'
      let idxPath = parent tarFile
      ensureDir idxPath
      do
@@ -312,7 +313,7 @@ updateIndexHTTP indexName' index url = do
     req <- parseUrl $ T.unpack url
     $logInfo ("Downloading package index from " <> url)
     gz <- configPackageIndexGz indexName'
-    tar <- configPackageIndex indexName'
+    tar NE.:| _ <- configPackageIndex indexName'
     wasDownloaded <- redownload req gz
     toUnpack <-
         if wasDownloaded
@@ -347,7 +348,7 @@ isGitInstalled = flip doesExecutableExist "git"
 -- | Delete the package index cache
 deleteCache :: (MonadIO m, MonadReader env m, HasConfig env, MonadLogger m, MonadThrow m) => IndexName -> m ()
 deleteCache indexName' = do
-    fp <- configPackageIndexCache indexName'
+    fp NE.:| _ <- configPackageIndexCache indexName'
     eres <- liftIO $ tryIO $ removeFile fp
     case eres of
         Left e -> $logDebug $ "Could not delete cache: " <> T.pack (show e)
@@ -411,8 +412,8 @@ getPackageCaches = do
         Just cached -> return cached
         Nothing -> do
             result <- liftM mconcat $ forM (configPackageIndices config) $ \index -> do
-                fp <- configPackageIndexCache (indexName index)
-                PackageCacheMap pis' <- taggedDecodeOrLoad fp $ liftM PackageCacheMap $ populateCache menv index
+                fps <- configPackageIndexCache (indexName index)
+                PackageCacheMap pis' <- taggedDecodeOrLoad fps $ liftM PackageCacheMap $ populateCache menv index
                 return (fmap (index,) pis')
             liftIO $ writeIORef (configPackageCaches config) (Just result)
             return result

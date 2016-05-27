@@ -23,6 +23,7 @@ module Stack.Types.Config
   -- ** HasPlatform & HasStackRoot
    HasPlatform(..)
   ,HasStackRoot(..)
+  ,HasStackSystemRoot(..)
   ,PlatformVariant(..)
   -- ** Config & HasConfig
   ,Config(..)
@@ -118,6 +119,7 @@ module Stack.Types.Config
   ,extraBinDirs
   ,hpcReportDir
   ,installationRootDeps
+  ,installationRootSnap
   ,installationRootLocal
   ,packageDatabaseDeps
   ,packageDatabaseExtra
@@ -214,6 +216,8 @@ import qualified Data.ByteString.Base16 as B16
 data Config =
   Config {configStackRoot           :: !(Path Abs Dir)
          -- ^ ~/.stack more often than not
+         ,configStackSystemRoot     :: !(Maybe (Path Abs Dir))
+         -- ^ Optionally /usr/share/stack or /opt/stack, or another read-only path
          ,configWorkDir             :: !(Path Rel Dir)
          -- ^ this allows to override .stack-work directory
          ,configUserConfigPath      :: !(Path Abs File)
@@ -230,6 +234,8 @@ data Config =
          -- ^ Non-platform-specific path containing local installations
          ,configLocalPrograms       :: !(Path Abs Dir)
          -- ^ Path containing local installations (mainly GHC)
+         ,configSystemPrograms      :: !(Maybe (Path Abs Dir))
+         -- ^ Path containing Stack system root installations (mainly GHC)
          ,configConnectionCount     :: !Int
          -- ^ How many concurrent connections are allowed when downloading
          ,configHideTHLoading       :: !Bool
@@ -531,6 +537,7 @@ instance HasConfig EnvConfig
 instance HasPlatform EnvConfig
 instance HasGHCVariant EnvConfig
 instance HasStackRoot EnvConfig
+instance HasStackSystemRoot EnvConfig
 class (HasBuildConfig r, HasGHCVariant r) => HasEnvConfig r where
     getEnvConfig :: r -> EnvConfig
 instance HasEnvConfig EnvConfig where
@@ -746,6 +753,12 @@ class HasStackRoot env where
     getStackRoot = configStackRoot . getConfig
     {-# INLINE getStackRoot #-}
 
+class HasStackSystemRoot env where
+    getStackSystemRoot :: env -> Maybe (Path Abs Dir)
+    default getStackSystemRoot :: HasConfig env => env -> Maybe (Path Abs Dir)
+    getStackSystemRoot = configStackSystemRoot . getConfig
+    {-# INLINE getStackSystemRoot #-}
+
 -- | Class for environment values which have a Platform
 class HasPlatform env where
     getPlatform :: env -> Platform
@@ -770,12 +783,13 @@ instance HasGHCVariant GHCVariant where
     getGHCVariant = id
 
 -- | Class for environment values that can provide a 'Config'.
-class (HasStackRoot env, HasPlatform env) => HasConfig env where
+class (HasStackRoot env, HasStackSystemRoot env, HasPlatform env) => HasConfig env where
     getConfig :: env -> Config
     default getConfig :: HasBuildConfig env => env -> Config
     getConfig = bcConfig . getBuildConfig
     {-# INLINE getConfig #-}
 instance HasStackRoot Config
+instance HasStackSystemRoot Config
 instance HasPlatform Config
 instance HasConfig Config where
     getConfig = id
@@ -785,6 +799,7 @@ instance HasConfig Config where
 class HasConfig env => HasBuildConfig env where
     getBuildConfig :: env -> BuildConfig
 instance HasStackRoot BuildConfig
+instance HasStackSystemRoot BuildConfig
 instance HasPlatform BuildConfig
 instance HasGHCVariant BuildConfig
 instance HasConfig BuildConfig
@@ -798,6 +813,8 @@ data ConfigMonoid =
   ConfigMonoid
     { configMonoidStackRoot          :: !(First (Path Abs Dir))
     -- ^ See: 'configStackRoot'
+    , configMonoidStackSystemRoot    :: !(First FilePath)
+    -- ^ See: 'configStackSystemRoot'
     , configMonoidWorkDir            :: !(First FilePath)
     -- ^ See: 'configWorkDir'.
     , configMonoidBuildOpts          :: !BuildOptsMonoid
@@ -891,6 +908,7 @@ parseConfigMonoidJSON :: Object -> WarningParser ConfigMonoid
 parseConfigMonoidJSON obj = do
     -- Parsing 'stackRoot' from 'stackRoot'/config.yaml would be nonsensical
     let configMonoidStackRoot = First Nothing
+    configMonoidStackSystemRoot <- First <$> obj ..:? configMonoidStackSystemRootName
     configMonoidWorkDir <- First <$> obj ..:? configMonoidWorkDirName
     configMonoidBuildOpts <- jsonSubWarnings (obj ..:? configMonoidBuildOptsName ..!= mempty)
     configMonoidDockerOpts <- jsonSubWarnings (obj ..:? configMonoidDockerOptsName ..!= mempty)
@@ -959,6 +977,9 @@ parseConfigMonoidJSON obj = do
 
 configMonoidWorkDirName :: Text
 configMonoidWorkDirName = "work-dir"
+
+configMonoidStackSystemRootName :: Text
+configMonoidStackSystemRootName = "stack-system-root"
 
 configMonoidBuildOptsName :: Text
 configMonoidBuildOptsName = "build"
@@ -1207,17 +1228,21 @@ askConfig = liftM getConfig ask
 askLatestSnapshotUrl :: (MonadReader env m, HasConfig env) => m Text
 askLatestSnapshotUrl = asks (urlsLatestSnapshot . configUrls . getConfig)
 
--- | Root for a specific package index
-configPackageIndexRoot :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (Path Abs Dir)
-configPackageIndexRoot (IndexName name) = do
+-- | Root for a specific package index on a specific Stack root
+configPackageIndexSomeRoot :: (MonadReader env m, HasConfig env, MonadThrow m) => (Config -> Path Abs Dir) -> IndexName -> m (Path Abs Dir)
+configPackageIndexSomeRoot stackRootF (IndexName name) = do
     config <- asks getConfig
     dir <- parseRelDir $ S8.unpack name
-    return (configStackRoot config </> $(mkRelDir "indices") </> dir)
+    return (stackRootF config </> $(mkRelDir "indices") </> dir)
+
+-- | Root for a specific package index on the local Stack root
+configPackageIndexRoot :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (Path Abs Dir)
+configPackageIndexRoot = configPackageIndexSomeRoot configStackRoot
 
 -- | Git repo directory for a specific package index, returns 'Nothing' if not
 -- a Git repo
-configPackageIndexRepo :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (Maybe (Path Abs Dir))
-configPackageIndexRepo name = do
+configPackageIndexRepoSomeRoot :: (MonadReader env m, HasConfig env, MonadThrow m) => (Config -> Path Abs Dir) -> IndexName -> m (Maybe (Path Abs Dir))
+configPackageIndexRepoSomeRoot stackRootF name = do
     indices <- asks $ configPackageIndices . getConfig
     case filter (\p -> indexName p == name) indices of
         [index] -> do
@@ -1229,7 +1254,7 @@ configPackageIndexRepo name = do
             case murl of
                 Nothing -> return Nothing
                 Just url -> do
-                    sDir <- configPackageIndexRoot name
+                    sDir <- configPackageIndexSomeRoot stackRootF name
                     repoName <- parseRelDir $ takeBaseName $ T.unpack url
                     let suDir =
                           sDir </>
@@ -1237,26 +1262,47 @@ configPackageIndexRepo name = do
                     return $ Just $ suDir </> repoName
         _ -> assert False $ return Nothing
 
+-- | Return information from either indices
+configPackageIndexInfo :: (MonadReader env m, HasStackSystemRoot env) =>
+                          ((Config -> Path Abs Dir) -> t -> m a) -> t -> m (NonEmpty a)
+configPackageIndexInfo f indexName = do
+    local <- f configStackRoot indexName
+    maybeSystemPath <- asks getStackSystemRoot
+    case maybeSystemPath of
+        Just systemPath -> do
+            system <- f (const systemPath) indexName
+            return $ local NonEmpty.:| [system]
+        Nothing -> return $ local NonEmpty.:| []
+
+-- | Specific version of configPackageIndexRepoSomeRoot for configStackRoot
+configPackageIndexRepo :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (NonEmpty (Maybe (Path Abs Dir)))
+configPackageIndexRepo = configPackageIndexInfo f
+    where f stackRootF = configPackageIndexRepoSomeRoot stackRootF
+
 -- | Location of the 00-index.cache file
-configPackageIndexCache :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (Path Abs File)
-configPackageIndexCache = liftM (</> $(mkRelFile "00-index.cache")) . configPackageIndexRoot
+configPackageIndexCache :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (NonEmpty (Path Abs File))
+configPackageIndexCache = configPackageIndexInfo f
+    where f stackRootF = liftM (</> $(mkRelFile "00-index.cache")) . (configPackageIndexSomeRoot stackRootF)
 
 -- | Location of the 00-index.tar file
-configPackageIndex :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (Path Abs File)
-configPackageIndex = liftM (</> $(mkRelFile "00-index.tar")) . configPackageIndexRoot
+configPackageIndex :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (NonEmpty (Path Abs File))
+configPackageIndex = configPackageIndexInfo f
+    where f stackRootF = liftM (</> $(mkRelFile "00-index.tar")) . (configPackageIndexSomeRoot stackRootF)
 
 -- | Location of the 00-index.tar.gz file
 configPackageIndexGz :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> m (Path Abs File)
 configPackageIndexGz = liftM (</> $(mkRelFile "00-index.tar.gz")) . configPackageIndexRoot
 
 -- | Location of a package tarball
-configPackageTarball :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> PackageIdentifier -> m (Path Abs File)
-configPackageTarball iname ident = do
-    root <- configPackageIndexRoot iname
-    name <- parseRelDir $ packageNameString $ packageIdentifierName ident
-    ver <- parseRelDir $ versionString $ packageIdentifierVersion ident
-    base <- parseRelFile $ packageIdentifierString ident ++ ".tar.gz"
-    return (root </> $(mkRelDir "packages") </> name </> ver </> base)
+configPackageTarball :: (MonadReader env m, HasConfig env, MonadThrow m) => IndexName -> PackageIdentifier -> m (NonEmpty (Path Abs File))
+configPackageTarball iname ident = configPackageIndexInfo f iname
+  where
+    f stackRootF _ = do
+        root <- configPackageIndexSomeRoot stackRootF iname
+        name <- parseRelDir $ packageNameString $ packageIdentifierName ident
+        ver <- parseRelDir $ versionString $ packageIdentifierVersion ident
+        base <- parseRelFile $ packageIdentifierString ident ++ ".tar.gz"
+        return (root </> $(mkRelDir "packages") </> name </> ver </> base)
 
 -- | @".stack-work"@
 getWorkDir :: (MonadReader env m, HasConfig env) => m (Path Rel Dir)
@@ -1289,13 +1335,21 @@ snapshotsDir = do
     platform <- platformGhcRelDir
     return $ configStackRoot config </> $(mkRelDir "snapshots") </> platform
 
--- | Installation root for dependencies
-installationRootDeps :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (Path Abs Dir)
+-- | Installation roots for dependencies
+installationRootDeps :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (NonEmpty (Path Abs Dir))
 installationRootDeps = do
     config <- asks getConfig
     -- TODO: also useShaPathOnWindows here, once #1173 is resolved.
     psc <- platformSnapAndCompilerRel
-    return $ configStackRoot config </> $(mkRelDir "snapshots") </> psc
+    let f stackRoot = stackRoot </> $(mkRelDir "snapshots") </> psc
+        g extra = return $ f (configStackRoot config) NonEmpty.:| extra
+    case configStackSystemRoot config of
+        Nothing -> g []
+        Just x  -> g [f x]
+
+-- | Local snapshot installation root for dependencies
+installationRootSnap :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (Path Abs Dir)
+installationRootSnap = fmap NonEmpty.head installationRootDeps
 
 -- | Installation root for locals
 installationRootLocal :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (Path Abs Dir)
@@ -1348,10 +1402,10 @@ compilerVersionDir = do
         GhcjsVersion {} -> compilerVersionString compilerVersion
 
 -- | Package database for installing dependencies into
-packageDatabaseDeps :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (Path Abs Dir)
+packageDatabaseDeps :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (NonEmpty (Path Abs Dir))
 packageDatabaseDeps = do
-    root <- installationRootDeps
-    return $ root </> $(mkRelDir "pkgdb")
+    roots <- installationRootDeps
+    return $ NonEmpty.map (</> $(mkRelDir "pkgdb")) roots
 
 -- | Package database for installing local packages into
 packageDatabaseLocal :: (MonadThrow m, MonadReader env m, HasEnvConfig env) => m (Path Abs Dir)
@@ -1374,14 +1428,20 @@ flagCacheLocal = do
 -- | Where to store mini build plan caches
 configMiniBuildPlanCache :: (MonadThrow m, MonadReader env m, HasConfig env, HasGHCVariant env)
                          => SnapName
-                         -> m (Path Abs File)
+                         -> m (NonEmpty (Path Abs File))
 configMiniBuildPlanCache name = do
-    root <- asks getStackRoot
-    platform <- platformGhcRelDir
-    file <- parseRelFile $ T.unpack (renderSnapName name) ++ ".cache"
-    -- Yes, cached plans differ based on platform
-    return (root </> $(mkRelDir "build-plan-cache") </> platform </> file)
+    localPath <- asks getStackRoot >>= perRoot
+    maybeSystemPath <- asks getStackSystemRoot
+    case maybeSystemPath of
+        Just systemPath -> do
+            perRoot systemPath >>= \x -> return $ localPath NonEmpty.:| [x]
+        Nothing -> return $ localPath NonEmpty.:| []
 
+  where perRoot root = do
+            platform <- platformGhcRelDir
+            file <- parseRelFile $ T.unpack (renderSnapName name) ++ ".cache"
+            -- Yes, cached plans differ based on platform
+            return (root </> $(mkRelDir "build-plan-cache") </> platform </> file)
 -- | Suffix applied to an installation root to get the bin dir
 bindirSuffix :: Path Rel Dir
 bindirSuffix = $(mkRelDir "bin")
@@ -1404,10 +1464,11 @@ extraBinDirs :: (MonadThrow m, MonadReader env m, HasEnvConfig env)
              => m (Bool -> [Path Abs Dir])
 extraBinDirs = do
     deps <- installationRootDeps
+    let depsWithBin = map (</> bindirSuffix) (NonEmpty.toList deps)
     local <- installationRootLocal
     return $ \locals -> if locals
-        then [local </> bindirSuffix, deps </> bindirSuffix]
-        else [deps </> bindirSuffix]
+        then [local </> bindirSuffix] ++ depsWithBin
+        else depsWithBin
 
 -- | Get the minimal environment override, useful for just calling external
 -- processes like git or ghc

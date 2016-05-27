@@ -45,6 +45,7 @@ import           Data.Foldable hiding (concatMap, or, maximum)
 import           Data.IORef
 import           Data.IORef.RunOnce (runOnce)
 import           Data.List hiding (concat, elem, maximumBy, any)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Maybe
@@ -236,13 +237,13 @@ setupEnv mResolveMissingGHC = do
     depsPath <- augmentPath (mkDirs' False) mpath
     localsPath <- augmentPath (mkDirs' True) mpath
 
-    deps <- runReaderT packageDatabaseDeps envConfig0
+    allDeps@(deps NE.:| _) <- runReaderT packageDatabaseDeps envConfig0
     createDatabase menv wc deps
     localdb <- runReaderT packageDatabaseLocal envConfig0
     createDatabase menv wc localdb
     globaldb <- getGlobalDB menv wc
     extras <- runReaderT packageDatabaseExtra envConfig0
-    let mkGPP locals = mkGhcPackagePath locals localdb deps extras globaldb
+    let mkGPP locals = mkGhcPackagePath locals localdb (NE.toList allDeps) extras globaldb
 
     distDir <- runReaderT distRelativeDir envConfig0
 
@@ -358,23 +359,33 @@ ensureCompiler sopts = do
         then do
             getSetupInfo' <- runOnce (getSetupInfo (soptsStackSetupYaml sopts) =<< asks getHttpManager)
 
-            localPrograms <- asks $ configLocalPrograms . getConfig
-            installed <- listInstalled localPrograms
+            localProgramsPath <- asks $ configLocalPrograms . getConfig
+            installed <- do
+                let listIntalledWithPath path =
+                        fmap (map (\i -> (path, i))) $ listInstalled path
+                local <- listIntalledWithPath localProgramsPath
+                system <- (asks $ configSystemPrograms . getConfig) >>= \case
+                    Nothing -> return []
+                    Just x ->  listIntalledWithPath x
+                return $ local ++ system
 
             -- Install GHC
             ghcVariant <- asks getGHCVariant
+
             config <- asks getConfig
             ghcPkgName <- parsePackageNameFromString ("ghc" ++ ghcVariantSuffix ghcVariant)
             let installedCompiler =
                     case wc of
                         Ghc -> getInstalledTool installed ghcPkgName (isWanted . GhcVersion)
                         Ghcjs -> getInstalledGhcjs installed isWanted
+
             compilerTool <- case installedCompiler of
                 Just tool -> return tool
                 Nothing
                     | soptsInstallIfMissing sopts -> do
                         si <- getSetupInfo'
-                        downloadAndInstallCompiler
+                        fmap (\x -> (localProgramsPath, x)) $
+                            downloadAndInstallCompiler
                             si
                             (soptsWantedCompiler sopts)
                             (soptsCompilerCheck sopts)
@@ -406,7 +417,8 @@ ensureCompiler sopts = do
                                         Just x -> return x
                                         Nothing -> error $ "MSYS2 not found for " ++ T.unpack osKey
                                 let tool = Tool (PackageIdentifier $(mkPackageName "msys2") version)
-                                Just <$> downloadAndInstallTool (configLocalPrograms config) si info tool (installMsys2Windows osKey)
+                                rtool <- downloadAndInstallTool (configLocalPrograms config) si info tool (installMsys2Windows osKey)
+                                return $ Just (localProgramsPath, rtool)
                             | otherwise -> do
                                 $logWarn "Continuing despite missing tool: msys2"
                                 return Nothing
@@ -438,7 +450,7 @@ ensureCompiler sopts = do
         upgradeCabal menv wc
 
     case mtools of
-        Just (ToolGhcjs cv, _) -> ensureGhcjsBooted menv cv (soptsInstallIfMissing sopts)
+        Just ((_, ToolGhcjs cv), _) -> ensureGhcjsBooted menv cv (soptsInstallIfMissing sopts)
         _ -> return ()
 
     when (soptsSanityCheck sopts) $ sanityCheck menv wc
@@ -599,34 +611,38 @@ getSetupInfo stackSetupYaml manager = do
             logJSONWarnings urlOrFile warnings
         return si
 
-getInstalledTool :: [Tool]            -- ^ already installed
+getInstalledTool :: [(Path Abs Dir, Tool)] -- ^ already installed
                  -> PackageName       -- ^ package to find
                  -> (Version -> Bool) -- ^ which versions are acceptable
-                 -> Maybe Tool
+                 -> Maybe (Path Abs Dir, Tool)
 getInstalledTool installed name goodVersion =
     if null available
         then Nothing
-        else Just $ Tool $ maximumBy (comparing packageIdentifierVersion) available
+        else Just $ maximumBy (comparing f) available
   where
     available = mapMaybe goodPackage installed
-    goodPackage (Tool pi') =
+    goodPackage (path, Tool pi') =
         if packageIdentifierName pi' == name &&
            goodVersion (packageIdentifierVersion pi')
-            then Just pi'
+            then Just (path, Tool pi')
             else Nothing
     goodPackage _ = Nothing
+    f (_, Tool pi') = Just $ packageIdentifierVersion pi'
+    f _             = Nothing
 
-getInstalledGhcjs :: [Tool]
+getInstalledGhcjs :: [(Path Abs Dir, Tool)]
                   -> (CompilerVersion -> Bool)
-                  -> Maybe Tool
+                  -> Maybe (Path Abs Dir, Tool)
 getInstalledGhcjs installed goodVersion =
     if null available
         then Nothing
-        else Just $ ToolGhcjs $ maximum available
+        else Just $ maximumBy f available
   where
     available = mapMaybe goodPackage installed
-    goodPackage (ToolGhcjs cv) = if goodVersion cv then Just cv else Nothing
+    goodPackage o@(_, ToolGhcjs cv) = if goodVersion cv then Just o else Nothing
     goodPackage _ = Nothing
+    f (_, ToolGhcjs a) (_, ToolGhcjs b) = compare a b
+    f _ _                               = EQ
 
 downloadAndInstallTool :: (MonadIO m, MonadMask m, MonadLogger m, MonadReader env m, HasConfig env, HasHttpManager env, MonadBaseControl IO m)
                        => Path Abs Dir
