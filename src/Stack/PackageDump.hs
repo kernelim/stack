@@ -48,6 +48,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import           Data.Text (Text)
 import           Data.Typeable (Typeable)
+import qualified Data.List.NonEmpty as NE
 import           GHC.Generics (Generic)
 import           Path
 import           Path.IO (ensureDir)
@@ -129,7 +130,7 @@ newInstalledCache = liftIO $ InstalledCache <$> newIORef (InstalledCacheInner Ma
 -- empty cache.
 loadInstalledCache :: (MonadLogger m, MonadIO m) => Path Abs File -> m InstalledCache
 loadInstalledCache path = do
-    m <- taggedDecodeOrLoad path (return $ InstalledCacheInner Map.empty)
+    m <- taggedDecodeOrLoad (path NE.:| []) (return $ InstalledCacheInner Map.empty)
     liftIO $ InstalledCache <$> newIORef m
 
 -- | Save a @InstalledCache@ to disk

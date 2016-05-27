@@ -23,6 +23,7 @@ import           Data.Attoparsec.Interpreter (getInterpreterArgs)
 import qualified Data.ByteString.Lazy as L
 import           Data.IORef
 import           Data.List
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import qualified Data.Map.Strict as M
 import           Data.Maybe
@@ -522,11 +523,11 @@ pathCmd keys go =
             -- It was set up in 'withBuildConfigAndLock -> withBuildConfigExt -> setupEnv'.
             -- So it's not the *minimal* override path.
             menv <- getMinimalEnvOverride
-            snap <- packageDatabaseDeps
+            snaps <- fmap (NE.toList) $ packageDatabaseDeps
             plocal <- packageDatabaseLocal
             extra <- packageDatabaseExtra
             global <- getGlobalDB menv =<< getWhichCompiler
-            snaproot <- installationRootDeps
+            snaproots <- fmap (NE.toList) $ installationRootDeps
             localroot <- installationRootLocal
             distDir <- distRelativeDir
             hpcDir <- hpcReportDir
@@ -556,10 +557,10 @@ pathCmd keys go =
                                (PathInfo
                                     bc
                                     menv
-                                    snap
+                                    snaps
                                     plocal
                                     global
-                                    snaproot
+                                    snaproots
                                     localroot
                                     distDir
                                     hpcDir
@@ -570,10 +571,10 @@ pathCmd keys go =
 data PathInfo = PathInfo
     { piBuildConfig  :: BuildConfig
     , piEnvOverride  :: EnvOverride
-    , piSnapDb       :: Path Abs Dir
+    , piSnapDbs      :: [Path Abs Dir]
     , piLocalDb      :: Path Abs Dir
     , piGlobalDb     :: Path Abs Dir
-    , piSnapRoot     :: Path Abs Dir
+    , piSnapRoots    :: [Path Abs Dir]
     , piLocalRoot    :: Path Abs Dir
     , piDistDir      :: Path Rel Dir
     , piHpcDir       :: Path Abs Dir
@@ -624,7 +625,7 @@ paths =
       , T.intercalate ", " . Set.elems . configExtraLibDirs . bcConfig . piBuildConfig )
     , ( "Snapshot package database"
       , "snapshot-pkg-db"
-      , T.pack . toFilePathNoTrailingSep . piSnapDb )
+      , T.intercalate ", " . (map (T.pack . toFilePathNoTrailingSep)) . piSnapDbs )
     , ( "Local project package database"
       , "local-pkg-db"
       , T.pack . toFilePathNoTrailingSep . piLocalDb )
@@ -633,16 +634,16 @@ paths =
       , T.pack . toFilePathNoTrailingSep . piGlobalDb )
     , ( "GHC_PACKAGE_PATH environment variable"
       , "ghc-package-path"
-      , \pi -> mkGhcPackagePath True (piLocalDb pi) (piSnapDb pi) (piExtraDbs pi) (piGlobalDb pi))
+      , \pi -> mkGhcPackagePath True (piLocalDb pi) (piSnapDbs pi) (piExtraDbs pi) (piGlobalDb pi))
     , ( "Snapshot installation root"
       , "snapshot-install-root"
-      , T.pack . toFilePathNoTrailingSep . piSnapRoot )
+      , T.intercalate ", " . (map (T.pack . toFilePathNoTrailingSep)) . piSnapRoots )
     , ( "Local project installation root"
       , "local-install-root"
       , T.pack . toFilePathNoTrailingSep . piLocalRoot )
     , ( "Snapshot documentation root"
       , "snapshot-doc-root"
-      , \pi -> T.pack (toFilePathNoTrailingSep (piSnapRoot pi </> docDirSuffix)))
+      , T.intercalate ", " . (map (T.pack . toFilePathNoTrailingSep . (</> docDirSuffix))) . piSnapRoots )
     , ( "Local project documentation root"
       , "local-doc-root"
       , \pi -> T.pack (toFilePathNoTrailingSep (piLocalRoot pi </> docDirSuffix)))
@@ -878,7 +879,7 @@ withBuildConfigExt go@GlobalOpts{..} mbefore inner mafter = do
             -- Locking policy:  This is only used for build commands, which
             -- only need to lock the snapshot, not the global lock.  We
             -- trade in the lock here.
-            do dir <- installationRootDeps
+            do dir NE.:| _ <- installationRootDeps
                -- Hand-over-hand locking:
                withUserFileLock go dir $ \lk2 -> do
                  liftIO $ writeIORef curLk lk2

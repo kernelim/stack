@@ -39,6 +39,7 @@ import           Data.Char (isSpace,toUpper,isAscii,isDigit)
 import           Data.Conduit.List (sinkNull)
 import           Data.List (dropWhileEnd,intercalate,isPrefixOf,isInfixOf,foldl')
 import           Data.List.Extra (trim)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
@@ -769,7 +770,7 @@ entrypoint config@Config{..} DockerEntrypoint{..} =
                 copyFile srcBuildPlan destBuildPlan
           forM_ configPackageIndices $ \pkgIdx -> do
             msrcIndex <- flip runReaderT (config{configStackRoot = origStackRoot}) $ do
-               srcIndex <- configPackageIndex (indexName pkgIdx)
+               srcIndex NE.:| _ <- configPackageIndex (indexName pkgIdx)
                exists <- doesFileExist srcIndex
                return $ if exists
                  then Just srcIndex
@@ -778,7 +779,7 @@ entrypoint config@Config{..} DockerEntrypoint{..} =
               Nothing -> return ()
               Just srcIndex -> do
                 flip runReaderT config $ do
-                  destIndex <- configPackageIndex (indexName pkgIdx)
+                  destIndex NE.:| _ <- configPackageIndex (indexName pkgIdx)
                   exists <- doesFileExist destIndex
                   unless exists $ do
                     ensureDir (parent destIndex)

@@ -27,6 +27,8 @@ import Data.Binary.Tagged (HasStructuralInfo, HasSemanticVersion)
 import qualified Data.Binary.Tagged as BinaryTagged
 import Data.Monoid ((<>))
 import Data.Typeable (Typeable)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Control.Exception.Enclosed (tryAnyDeep)
 import Path
 import Path.IO (ensureDir)
@@ -43,24 +45,30 @@ taggedEncodeFile fp x = liftIO $ do
     ensureDir (parent fp)
     BinaryTagged.taggedEncodeFile (toFilePath fp) x
 
--- | Read from the given file. If the read fails, run the given action and
--- write that back to the file. Always starts the file off with the version
--- tag.
+-- | Try to read a file from the given paths until one succeeds, and if
+-- they all fail - run the given action and write that back to the first
+-- file. Always starts the file off with the version tag.
 taggedDecodeOrLoad :: (BinarySchema a, MonadIO m, MonadLogger m)
-                   => Path Abs File
+                   => NonEmpty (Path Abs File)
                    -> m a
                    -> m a
-taggedDecodeOrLoad fp mx = do
+taggedDecodeOrLoad (headFp NE.:| other') mx =
+   crux headFp other'
+ where
+   crux fp other = do
     let fpt = T.pack (toFilePath fp)
     $logDebug $ "Trying to decode " <> fpt
     eres <- decodeFileOrFailDeep fp
-    case eres of
-        Left _ -> do
+    case (eres, other) of
+        (Left _, []) -> do
             $logDebug $ "Failure decoding " <> fpt
             x <- mx
-            taggedEncodeFile fp x
+            taggedEncodeFile headFp x
             return x
-        Right x -> do
+        (Left _, (nextFp:nextOtherFps)) -> do
+            $logDebug $ "Failure decoding, continuing "
+            crux nextFp nextOtherFps
+        (Right x, _) -> do
             $logDebug $ "Success decoding " <> fpt
             return x
 

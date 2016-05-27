@@ -201,7 +201,7 @@ configFromConfigMonoid
     -> Maybe (Project, Path Abs File)
     -> ConfigMonoid
     -> m Config
-configFromConfigMonoid configStackRoot configUserConfigPath mresolver mproject ConfigMonoid{..} = do
+configFromConfigMonoid configStackRoot configUserConfigPath mresolver mproject configMonoid@ConfigMonoid{..} = do
      configWorkDir <- parseRelDir (fromFirst ".stack-work" configMonoidWorkDir)
      -- This code is to handle the deprecation of latest-snapshot-url
      configUrls <- case (getFirst configMonoidLatestSnapshotUrl, getFirst (urlsMonoidLatestSnapshot configMonoidUrls)) of
@@ -248,6 +248,7 @@ configFromConfigMonoid configStackRoot configUserConfigPath mresolver mproject C
 
          configCompilerCheck = fromFirst MatchMinor configMonoidCompilerCheck
 
+     configStackSystemRoot <- determineStackSystemRoot configMonoid
      configPlatformVariant <- liftIO $
          maybe PlatformVariantNone PlatformVariant <$> lookupEnv platformVariantEnvVar
 
@@ -263,15 +264,20 @@ configFromConfigMonoid configStackRoot configUserConfigPath mresolver mproject C
      let configEnvOverride _ = return origEnv
 
      platformOnlyDir <- runReaderT platformOnlyRelDir (configPlatform,configPlatformVariant)
-     configLocalProgramsBase <-
-         case configPlatform of
-             Platform _ Windows -> do
-                 progsDir <- getWindowsProgsDir configStackRoot origEnv
-                 return $ progsDir </> $(mkRelDir stackProgName)
-             _ ->
-                 return $
-                 configStackRoot </> $(mkRelDir "programs")
-     let configLocalPrograms = configLocalProgramsBase </> platformOnlyDir
+     let getProgramsDir baseRoot = do
+             basePrograms <-
+                 case configPlatform of
+                     Platform _ Windows -> do
+                         progsDir <- getWindowsProgsDir baseRoot origEnv
+                         return $ progsDir </> $(mkRelDir stackProgName)
+                     _ ->
+                         return $ baseRoot </> $(mkRelDir "programs")
+             return $ (basePrograms, basePrograms </> platformOnlyDir)
+     (configLocalProgramsBase, configLocalPrograms) <- getProgramsDir configStackRoot
+
+     configSystemPrograms <- case configStackSystemRoot of
+         Nothing -> return Nothing
+         Just x -> getProgramsDir x >>= return . Just . snd
 
      configLocalBin <-
          case getFirst configMonoidLocalBinPath of
@@ -367,6 +373,7 @@ data MiniConfig = MiniConfig Manager GHCVariant Config
 instance HasConfig MiniConfig where
     getConfig (MiniConfig _ _ c) = c
 instance HasStackRoot MiniConfig
+instance HasStackSystemRoot MiniConfig
 instance HasHttpManager MiniConfig where
     getHttpManager (MiniConfig man _ _) = man
 instance HasPlatform MiniConfig
@@ -709,6 +716,21 @@ determineStackRootAndOwnership clArgs = do
 
     stackRoot' <- canonicalizePath stackRoot
     return (stackRoot', userOwnsIt)
+
+-- | Get the stack system root, assuming it is read-only.
+determineStackSystemRoot
+    :: (MonadIO m, MonadCatch m)
+    => ConfigMonoid
+    -- ^ Parsed command-line arguments
+    -> m (Maybe (Path Abs Dir))
+determineStackSystemRoot clArgs = do
+    maybeStackSystemRootFP <- do
+        case getFirst (configMonoidStackSystemRoot clArgs) of
+            Just x -> return $ Just x
+            Nothing -> liftIO $ lookupEnv stackSystemRootEnvVar
+    case maybeStackSystemRootFP of
+        Nothing -> return Nothing
+        Just x -> parseAbsDir x >>= canonicalizePath >>= return . Just
 
 -- | @'checkOwnership' dir@ throws 'UserDoesn'tOwnDirectory' if @dir@
 -- isn't owned by the current user.

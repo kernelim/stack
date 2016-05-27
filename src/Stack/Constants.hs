@@ -14,6 +14,8 @@ module Stack.Constants
     ,stackDotYaml
     ,stackRootEnvVar
     ,stackRootOptionName
+    ,stackSystemRootEnvVar
+    ,stackSystemRootOptionName
     ,deprecatedStackRootOptionName
     ,inContainerEnvVar
     ,configCacheFile
@@ -206,6 +208,14 @@ stackRootEnvVar = "STACK_ROOT"
 -- | Option name for the global stack root.
 stackRootOptionName :: String
 stackRootOptionName = "stack-root"
+
+-- | Environment variable used to override the optional system root location.
+stackSystemRootEnvVar :: String
+stackSystemRootEnvVar = "STACK_SYSTEM_ROOT"
+
+-- | Option name for the system stack root.
+stackSystemRootOptionName :: String
+stackSystemRootOptionName = "stack-system-root"
 
 -- | Deprecated option name for the global stack root.
 --

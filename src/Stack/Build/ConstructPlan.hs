@@ -114,6 +114,7 @@ data Ctx = Ctx
     }
 
 instance HasStackRoot Ctx
+instance HasStackSystemRoot Ctx
 instance HasPlatform Ctx
 instance HasGHCVariant Ctx
 instance HasConfig Ctx
