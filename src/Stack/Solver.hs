@@ -38,6 +38,7 @@ import qualified Data.HashMap.Strict         as HashMap
 import           Data.List                   ( (\\), isSuffixOf, intercalate
                                              , minimumBy, isPrefixOf)
 import           Data.List.Extra             (groupSortOn)
+import qualified Data.List.NonEmpty          as NE
 import           Data.Map                    (Map)
 import qualified Data.Map                    as Map
 import           Data.Maybe                  (catMaybes, isNothing, mapMaybe, fromMaybe)
@@ -240,7 +241,7 @@ getCabalConfig dir constraintType constraints = do
     return $ cache : remotes ++ map goConstraint (Map.toList constraints)
   where
     goIndex index = do
-        src <- configPackageIndex $ indexName index
+        src NE.:| _ <- configPackageIndex $ indexName index
         let dstdir = dir FP.</> T.unpack (indexNameText $ indexName index)
             dst = dstdir FP.</> "00-index.tar"
         liftIO $ void $ tryIO $ do

@@ -445,8 +445,8 @@ loadMiniBuildPlan
     => SnapName
     -> m MiniBuildPlan
 loadMiniBuildPlan name = do
-    path <- configMiniBuildPlanCache name
-    taggedDecodeOrLoad path $ liftM buildPlanFixes $ do
+    paths <- configMiniBuildPlanCache name
+    taggedDecodeOrLoad paths $ liftM buildPlanFixes $ do
         bp <- loadBuildPlan name
         toMiniBuildPlan
             (siCompilerVersion $ bpSystemInfo bp)
@@ -987,7 +987,7 @@ parseCustomMiniBuildPlan mconfigPath0 url0 = do
         yamlBS <- liftIO $ S.readFile $ toFilePath cacheFP
         let yamlHash = doHash yamlBS
         binaryPath <- getBinaryPath yamlHash
-        liftM (, yamlHash) $ taggedDecodeOrLoad binaryPath $ do
+        liftM (, yamlHash) $ taggedDecodeOrLoad (binaryPath NonEmpty.:| []) $ do
             (cs, mresolver) <- decodeYaml yamlBS
             parentMbp <- case (csCompilerVersion cs, mresolver) of
                 (Nothing, Nothing) -> throwM (NeitherCompilerOrResolverSpecified url)

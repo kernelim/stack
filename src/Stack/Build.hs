@@ -249,13 +249,14 @@ mkBaseConfigOpts :: (MonadIO m, MonadReader env m, HasEnvConfig env, MonadThrow 
                  => BuildOptsCLI -> m BaseConfigOpts
 mkBaseConfigOpts boptsCli = do
     bopts <- asks (configBuild . getConfig)
-    snapDBPath <- packageDatabaseDeps
+    snapDBPaths <- packageDatabaseDeps
     localDBPath <- packageDatabaseLocal
-    snapInstallRoot <- installationRootDeps
+    snapInstallRoot NE.:| _ <- installationRootDeps
+    -- TODO(da-x) -^^^^^^^  probably need to take the other paths into account
     localInstallRoot <- installationRootLocal
     packageExtraDBs <- packageDatabaseExtra
     return BaseConfigOpts
-        { bcoSnapDB = snapDBPath
+        { bcoSnapDBs = snapDBPaths
         , bcoLocalDB = localDBPath
         , bcoSnapInstallRoot = snapInstallRoot
         , bcoLocalInstallRoot = localInstallRoot

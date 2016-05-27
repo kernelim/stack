@@ -52,6 +52,8 @@ import           Data.Char (isSpace)
 import           Data.Data
 import           Data.Hashable
 import           Data.List (dropWhileEnd, nub, intercalate)
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import           Data.Map.Strict (Map)
 import           Data.Maybe
@@ -543,7 +545,7 @@ data Plan = Plan
 
 -- | Basic information used to calculate what the configure options are
 data BaseConfigOpts = BaseConfigOpts
-    { bcoSnapDB :: !(Path Abs Dir)
+    { bcoSnapDBs :: !(NonEmpty (Path Abs Dir))
     , bcoLocalDB :: !(Path Abs Dir)
     , bcoSnapInstallRoot :: !(Path Abs Dir)
     , bcoLocalInstallRoot :: !(Path Abs Dir)
@@ -596,8 +598,8 @@ configureOptsDirs :: BaseConfigOpts
 configureOptsDirs bco loc package = concat
     [ ["--user", "--package-db=clear", "--package-db=global"]
     , map (("--package-db=" ++) . toFilePathNoTrailingSep) $ case loc of
-        Snap -> bcoExtraDBs bco ++ [bcoSnapDB bco]
-        Local -> bcoExtraDBs bco ++ [bcoSnapDB bco] ++ [bcoLocalDB bco]
+        Snap -> bcoExtraDBs bco ++ NE.toList (bcoSnapDBs bco)
+        Local -> bcoExtraDBs bco ++ NE.toList (bcoSnapDBs bco) ++ [bcoLocalDB bco]
     , [ "--libdir=" ++ toFilePathNoTrailingSep (installRoot </> $(mkRelDir "lib"))
       , "--bindir=" ++ toFilePathNoTrailingSep (installRoot </> bindirSuffix)
       , "--datadir=" ++ toFilePathNoTrailingSep (installRoot </> $(mkRelDir "share"))

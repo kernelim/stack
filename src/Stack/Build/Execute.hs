@@ -43,6 +43,7 @@ import           Data.Foldable (forM_, any)
 import           Data.Function
 import           Data.IORef.RunOnce (runOnce)
 import           Data.List hiding (any)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
@@ -352,7 +353,7 @@ executePlan menv boptsCli baseConfigOpts locals globalPackages snapshotPackages 
     withExecuteEnv menv bopts boptsCli baseConfigOpts locals globalPackages snapshotPackages localPackages (executePlan' installedMap targets plan)
 
     unless (Map.null $ planInstallExes plan) $ do
-        snapBin <- (</> bindirSuffix) `liftM` installationRootDeps
+        snapBin <- (</> bindirSuffix) `liftM` installationRootSnap
         localBin <- (</> bindirSuffix) `liftM` installationRootLocal
         destDir <- asks $ configLocalBin . getConfig
         ensureDir destDir
@@ -847,8 +848,8 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                                 : "-global-package-db"
                                 : map (("-package-db=" ++) . toFilePathNoTrailingSep) (bcoExtraDBs eeBaseConfigOpts)
                                 ) ++
-                                ( ("-package-db=" ++ toFilePathNoTrailingSep (bcoSnapDB eeBaseConfigOpts))
-                                : ("-package-db=" ++ toFilePathNoTrailingSep (bcoLocalDB eeBaseConfigOpts))
+                                  ["-package-db=" ++ toFilePathNoTrailingSep p | p <- NE.toList $ bcoSnapDBs eeBaseConfigOpts] ++
+                                ( ("-package-db=" ++ toFilePathNoTrailingSep (bcoLocalDB eeBaseConfigOpts))
                                 : ["-hide-all-packages"]
                                 ) ++
                                 cabalPackageArg ++
@@ -875,7 +876,7 @@ withSingleContext runInBase ActionContext {..} ExecuteEnv {..} task@Task {..} md
                             ("-clear-package-db"
                             : "-global-package-db"
                             : map (("-package-db=" ++) . toFilePathNoTrailingSep) (bcoExtraDBs eeBaseConfigOpts)
-                           ++ ["-package-db=" ++ toFilePathNoTrailingSep (bcoSnapDB eeBaseConfigOpts)])
+                           ++ ["-package-db=" ++ toFilePathNoTrailingSep p | p <- NE.toList $ bcoSnapDBs eeBaseConfigOpts])
 
                 setupArgs = ("--builddir=" ++ toFilePathNoTrailingSep distRelativeDir') : args
                 runExe exeName fullArgs =
@@ -1027,7 +1028,7 @@ singleBuild runInBase ac@ActionContext {..} ee@ExecuteEnv {..} task@Task {..} in
                 menv' <- modifyEnvOverride menv
                        $ Map.insert
                             "GHC_PACKAGE_PATH"
-                            (T.pack $ toFilePathNoTrailingSep $ bcoSnapDB eeBaseConfigOpts)
+                            (T.pack $ toFilePathNoTrailingSep $ NE.head $ bcoSnapDBs eeBaseConfigOpts)
 
                 -- In case a build of the library with different flags already exists, unregister it
                 -- before copying.
@@ -1056,7 +1057,7 @@ singleBuild runInBase ac@ActionContext {..} ee@ExecuteEnv {..} task@Task {..} in
             _ -> return ()
 
         -- Find the package in the database
-        let pkgDbs = [bcoSnapDB eeBaseConfigOpts]
+        let pkgDbs = NE.toList $ bcoSnapDBs eeBaseConfigOpts
 
         case mlib of
             Nothing -> return $ Just $ Executable taskProvides
@@ -1128,18 +1129,18 @@ singleBuild runInBase ac@ActionContext {..} ee@ExecuteEnv {..} task@Task {..} in
                 _ -> return ()
             when (packageHasLibrary package) $ cabal False ["register"]
 
-        let (installedPkgDb, installedDumpPkgsTVar) =
+        let (installedPkgDbs, installedDumpPkgsTVar) =
                 case taskLocation task of
                     Snap ->
-                         ( bcoSnapDB eeBaseConfigOpts
+                         ( NE.toList $ bcoSnapDBs eeBaseConfigOpts
                          , eeSnapshotDumpPkgs )
                     Local ->
-                        ( bcoLocalDB eeBaseConfigOpts
+                        ( [bcoLocalDB eeBaseConfigOpts]
                         , eeLocalDumpPkgs )
         let ident = PackageIdentifier (packageName package) (packageVersion package)
         mpkgid <- if packageHasLibrary package
             then do
-                mpkgid <- loadInstalledPkg eeEnvOverride wc [installedPkgDb] installedDumpPkgsTVar (packageName package)
+                mpkgid <- loadInstalledPkg eeEnvOverride wc installedPkgDbs installedDumpPkgsTVar (packageName package)
                 case mpkgid of
                     Nothing -> throwM $ Couldn'tFindPkgId $ packageName package
                     Just pkgid -> return $ Library ident pkgid

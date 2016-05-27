@@ -46,6 +46,7 @@ import           System.Process.Read
 data Tool
     = Tool PackageIdentifier -- ^ e.g. ghc-7.8.4, msys2-20150512
     | ToolGhcjs CompilerVersion -- ^ e.g. ghcjs-0.1.0_ghc-7.10.2
+    deriving Show
 
 toolString :: Tool -> String
 toolString (Tool ident) = packageIdentifierString ident
@@ -113,11 +114,11 @@ getCompilerVersion menv wc =
 
 -- | Binary directories for the given installed package
 extraDirs :: (MonadReader env m, HasConfig env, MonadThrow m, MonadLogger m)
-          => Tool
+          => (Path Abs Dir, Tool)
           -> m ExtraDirs
-extraDirs tool = do
+extraDirs (programDir, tool) = do
     config <- asks getConfig
-    dir <- installDir (configLocalPrograms config) tool
+    dir <- installDir programDir tool
     case (configPlatform config, toolNameString tool) of
         (Platform _ Cabal.Windows, isGHC -> True) -> return mempty
             { edBins = goList
