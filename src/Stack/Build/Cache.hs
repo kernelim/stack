@@ -49,6 +49,7 @@ import           Path.IO
 import           Stack.Types.Build
 import           Stack.Constants
 import           Stack.Types
+import qualified System.FilePath as FilePath
 
 -- | Directory containing files to mark an executable as installed
 exeInstalledDir :: (MonadReader env m, HasEnvConfig env, MonadThrow m)
@@ -291,15 +292,19 @@ writePrecompiledCache :: (MonadThrow m, MonadReader env m, HasEnvConfig env, Mon
 writePrecompiledCache baseConfigOpts pkgident copts depIDs mghcPkgId exes = do
     file <- precompiledCacheFile pkgident copts depIDs
     ensureDir (parent file)
+    ec <- asks getEnvConfig
+    let stackRootRelative = makeRelative (getStackRoot ec)
     mlibpath <-
         case mghcPkgId of
             Executable _ -> return Nothing
             Library _ ipid -> liftM Just $ do
                 ipid' <- parseRelFile $ ghcPkgIdString ipid ++ ".conf"
-                return $ toFilePath $ bcoSnapDB baseConfigOpts </> ipid'
+                relPath <- stackRootRelative $ bcoSnapDB baseConfigOpts </> ipid'
+                return $ toFilePath $ relPath
     exes' <- forM (Set.toList exes) $ \exe -> do
         name <- parseRelFile $ T.unpack exe
-        return $ toFilePath $ bcoSnapInstallRoot baseConfigOpts </> bindirSuffix </> name
+        relPath <- stackRootRelative $ bcoSnapInstallRoot baseConfigOpts </> bindirSuffix </> name
+        return $ toFilePath $ relPath
     liftIO $ taggedEncodeFile file PrecompiledCache
         { pcLibrary = mlibpath
         , pcExes = exes'
@@ -314,4 +319,17 @@ readPrecompiledCache :: (MonadThrow m, MonadReader env m, HasEnvConfig env, Mona
                      -> m (Maybe PrecompiledCache)
 readPrecompiledCache pkgident copts depIDs = do
     file <- precompiledCacheFile pkgident copts depIDs
-    decodeFileOrFailDeep file
+    ec <- asks getEnvConfig
+    let stackRoot = getStackRoot ec
+    mpc <- decodeFileOrFailDeep file
+    case mpc of
+        Nothing -> return Nothing
+        Just pc -> do
+            let toAbs path = do
+                    if FilePath.isAbsolute path
+                       then path
+                       else toFilePath stackRoot FilePath.</> path
+            return $ Just $ PrecompiledCache
+                  { pcLibrary = fmap toAbs (pcLibrary pc)
+                  , pcExes = map toAbs (pcExes pc)
+                  }
