@@ -20,6 +20,7 @@ module Stack.Options
     ,nixOptsParser
     ,logLevelOptsParser
     ,ghciOptsParser
+    ,relocateOptsParser
     ,solverOptsParser
     ,testOptsParser
     ,haddockOptsParser
@@ -60,6 +61,7 @@ import           Stack.Ghci                        (GhciOpts (..))
 import           Stack.Init
 import           Stack.New
 import           Stack.Nix
+import           Stack.Relocate                    (RelocateOpts (..))
 import           Stack.Types
 import           Stack.Types.TemplateName
 
@@ -199,6 +201,13 @@ cleanOptsParser = CleanShallow <$> packages <|> doFullClean
             CleanFull
             (long "full" <>
              help "Delete all work directories (.stack-work by default) in the project")
+
+-- | Command-line parser for the relocate command.
+relocateOptsParser :: Parser RelocateOpts
+relocateOptsParser = RelocateOpts <$> src <*> dest
+  where
+    src  = argument readAbsDir (metavar "DIR"     <> help ("Directory to relocate"))
+    dest = argument readAbsDir (metavar "DESTDIR" <> help ("New base pathname"))
 
 -- | Command-line arguments parser for configuration.
 configOptsParser :: GlobalOptsContext -> Parser ConfigMonoid

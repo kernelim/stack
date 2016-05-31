@@ -59,6 +59,7 @@ import qualified Paths_stack as Meta
 import           Prelude hiding (pi, mapM)
 import           Stack.Build
 import           Stack.Clean (CleanOpts, clean)
+import           Stack.Relocate (RelocateOpts, relocate)
 import           Stack.Config
 import           Stack.ConfigCmd as ConfigCmd
 import           Stack.Constants
@@ -345,6 +346,10 @@ commandLineHandler progName isInterpreter = complicatedOptions
                     "Clean the local packages"
                     cleanCmd
                     cleanOptsParser
+        addCommand' "relocate"
+                    "Change absolute paths in a Stack root to a different location"
+                    relocateCmd
+                    relocateOptsParser
         addCommand' "list-dependencies"
                     "List the dependencies"
                     listDependenciesCmd
@@ -912,6 +917,9 @@ withBuildConfigExt go@GlobalOpts{..} mbefore inner mafter = do
 
 cleanCmd :: CleanOpts -> GlobalOpts -> IO ()
 cleanCmd opts go = withBuildConfigAndLock go (const (clean opts))
+
+relocateCmd :: RelocateOpts -> GlobalOpts -> IO ()
+relocateCmd opts _ = relocate opts
 
 -- | Helper for build and install commands
 buildCmd :: BuildOptsCLI -> GlobalOpts -> IO ()
