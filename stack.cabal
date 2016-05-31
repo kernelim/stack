@@ -104,6 +104,7 @@ library
                      Stack.Package
                      Stack.PackageDump
                      Stack.PackageIndex
+                     Stack.Relocate
                      Stack.SDist
                      Stack.Setup
                      Stack.Setup.Installed
@@ -196,6 +197,7 @@ library
                    , retry >= 0.6 && < 0.8
                    , safe >= 0.3
                    , semigroups >= 0.5 && < 0.19
+                   , stringsearch >= 0.3.4
                    , split
                    , stm >= 2.4.4
                    , streaming-commons >= 0.1.10.0

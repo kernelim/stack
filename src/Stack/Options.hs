@@ -20,6 +20,7 @@ module Stack.Options
     ,nixOptsParser
     ,logLevelOptsParser
     ,ghciOptsParser
+    ,relocateOptsParser
     ,solverOptsParser
     ,testOptsParser
     ,haddockOptsParser
@@ -60,6 +61,7 @@ import           Stack.Ghci                        (GhciOpts (..))
 import           Stack.Init
 import           Stack.New
 import           Stack.Nix
+import           Stack.Relocate                    (RelocateOpts (..))
 import           Stack.Types
 import           Stack.Types.TemplateName
 
@@ -200,6 +202,15 @@ cleanOptsParser = CleanShallow <$> packages <|> doFullClean
             (long "full" <>
              help "Delete all work directories (.stack-work by default) in the project")
 
+-- | Command-line parser for the relocate command.
+relocateOptsParser :: Parser RelocateOpts
+relocateOptsParser = RelocateOpts <$> dir <*> dest <*> currentSource
+  where
+    dir  = argument readAbsDir (metavar "DIR"     <> help ("Directory to relocate"))
+    dest = argument readAbsDir (metavar "DESTDIR" <> help ("New base pathname"))
+    currentSource =
+        option readAbsDirMaybe (long "source" <> help "Current base pathname, if different that DIR")
+
 -- | Command-line arguments parser for configuration.
 configOptsParser :: GlobalOptsContext -> Parser ConfigMonoid
 configOptsParser hide0 =
@@ -320,6 +331,10 @@ readAbsDir = do
         Nothing ->
             readerError
                 ("Failed to parse absolute path to directory: '" ++ s ++ "'")
+
+readAbsDirMaybe :: ReadM (Maybe (Path Abs Dir))
+readAbsDirMaybe = do
+    readAbsDir >>= return . Just
 
 buildOptsMonoidParser :: Bool -> Parser BuildOptsMonoid
 buildOptsMonoidParser hide0 =
