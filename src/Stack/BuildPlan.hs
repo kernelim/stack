@@ -22,6 +22,7 @@ module Stack.BuildPlan
     , MiniBuildPlan(..)
     , MiniPackageInfo(..)
     , loadResolver
+    , loadBuildPlan
     , loadMiniBuildPlan
     , removeSrcPkgDefaultFlags
     , resolveBuildPlan
