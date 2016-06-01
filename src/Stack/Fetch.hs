@@ -144,27 +144,30 @@ fetchPackages menv idents' = do
 -- | Intended to work for the command line command.
 unpackPackages :: (MonadIO m, MonadBaseControl IO m, MonadReader env m, HasHttpManager env, HasConfig env, MonadMask m, MonadLogger m)
                => EnvOverride
-               -> FilePath -- ^ destination
+               -> Maybe FilePath -- ^ destination
                -> [String] -- ^ names or identifiers
                -> m ()
-unpackPackages menv dest input = do
-    dest' <- resolveDir' dest
+unpackPackages menv mdest input = do
     (names, idents) <- case partitionEithers $ map parse input of
         ([], x) -> return $ partitionEithers x
         (errs, _) -> throwM $ CouldNotParsePackageSelectors errs
-    resolved <- resolvePackages menv
-        (Map.fromList $ map (, Nothing) idents)
-        (Set.fromList names)
-    ToFetchResult toFetch alreadyUnpacked <- getToFetch (Just dest') resolved
-    unless (Map.null alreadyUnpacked) $
-        throwM $ UnpackDirectoryAlreadyExists $ Set.fromList $ map toFilePath $ Map.elems alreadyUnpacked
-    unpacked <- fetchPackages' Nothing toFetch
-    F.forM_ (Map.toList unpacked) $ \(ident, dest'') -> $logInfo $ T.pack $ concat
-        [ "Unpacked "
-        , packageIdentifierString ident
-        , " to "
-        , toFilePath dest''
-        ]
+    case mdest of
+        Nothing -> fetchPackages menv (Set.fromList idents)
+        Just dest -> do
+            dest' <- resolveDir' dest
+            resolved <- resolvePackages menv
+                (Map.fromList $ map (, Nothing) idents)
+                (Set.fromList names)
+            ToFetchResult toFetch alreadyUnpacked <- getToFetch (Just dest') resolved
+            unless (Map.null alreadyUnpacked) $
+                throwM $ UnpackDirectoryAlreadyExists $ Set.fromList $ map toFilePath $ Map.elems alreadyUnpacked
+            unpacked <- fetchPackages' Nothing toFetch
+            F.forM_ (Map.toList unpacked) $ \(ident, dest'') -> $logInfo $ T.pack $ concat
+                [ "Unpacked "
+                , packageIdentifierString ident
+                , " to "
+                , toFilePath dest''
+                ]
   where
     -- Possible future enhancement: parse names as name + version range
     parse s =

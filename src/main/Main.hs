@@ -266,7 +266,10 @@ commandLineHandler progName isInterpreter = complicatedOptions
         addCommand' "unpack"
                     "Unpack one or more packages locally"
                     unpackCmd
-                    (some $ strArgument $ metavar "PACKAGE")
+                    ((,) <$> (some $ strArgument $ metavar "PACKAGE")
+                         <*> switch
+                              ( long "fetch-only"
+                             <> help "Don't unpack"))
         addCommand' "update"
                     "Update the package index"
                     updateCmd
@@ -956,10 +959,10 @@ uninstallCmd _ go = withConfigAndLock go $ do
     $logError "For the default executable destination, please run 'stack path --local-bin-path'"
 
 -- | Unpack packages to the filesystem
-unpackCmd :: [String] -> GlobalOpts -> IO ()
-unpackCmd names go = withConfigAndLock go $ do
+unpackCmd :: ([String], Bool) -> GlobalOpts -> IO ()
+unpackCmd (names, fetchOnly) go = withConfigAndLock go $ do
     menv <- getMinimalEnvOverride
-    Stack.Fetch.unpackPackages menv "." names
+    Stack.Fetch.unpackPackages menv (if fetchOnly then Nothing else Just ".") names
 
 -- | Update the package index
 updateCmd :: () -> GlobalOpts -> IO ()
