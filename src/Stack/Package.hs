@@ -184,6 +184,7 @@ resolvePackage packageConfig gpkg =
     , packageVersion = fromCabalVersion (pkgVersion pkgId)
     , packageDeps = deps
     , packageFiles = pkgFiles
+    , packageExtraDeps = packageExtraLibs pkg
     , packageTools = packageDescTools pkg
     , packageGhcOptions = packageConfigGhcOptions packageConfig
     , packageFlags = packageConfigFlags packageConfig
@@ -489,6 +490,10 @@ packageToolDependencies =
 -- | Get all dependencies of the package (buildable targets only).
 packageDescTools :: PackageDescription -> [Dependency]
 packageDescTools = concatMap buildTools . allBuildInfo'
+
+-- | Get all extra dependencies of the package.
+packageExtraLibs :: PackageDescription -> [Text]
+packageExtraLibs = map T.pack . concatMap extraLibs . allBuildInfo'
 
 -- | This is a copy-paste from Cabal's @allBuildInfo@ function, but with the
 -- @buildable@ test removed. The reason is that (surprise) Cabal is broken,

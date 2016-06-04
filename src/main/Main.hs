@@ -40,6 +40,7 @@ import           Data.Version (showVersion)
 import           Development.GitRev (gitCommitCount, gitHash)
 #endif
 import           Distribution.System (buildArch, buildPlatform)
+import           Distribution.Package (PackageName(..), Dependency(..))
 import           Distribution.Text (display)
 import           GHC.IO.Encoding (mkTextEncoding, textEncodingName)
 import           Lens.Micro
@@ -367,6 +368,10 @@ commandLineHandler progName isInterpreter = complicatedOptions
                     "List all package names in the build plan"
                     listBuildplanCmd
                     (pure ())
+        addCommand' "generate-build-plan-makefile"
+                    "Generate a build plan Makefile"
+                    generateBuildplanMakefileCmd
+                    (strArgument $ metavar "COMMAND")
         addCommand' "query"
                     "Query general build information (experimental)"
                     queryCmd
@@ -1266,6 +1271,56 @@ listBuildplanCmd _ go = withBuildConfig go $ do
                 \(pkgName, pkg) -> liftIO $
                      T.putStrLn (T.concat [packageNameText pkgName, "-",
                                            versionText . ppVersion $ pkg])
+        _ -> return ()
+
+generateBuildplanMakefileCmd :: String -> GlobalOpts -> IO ()
+generateBuildplanMakefileCmd cmd go = withBuildConfig go $ do
+    bconfig <- asks getBuildConfig
+    menv <- getMinimalEnvOverride
+    case bcResolver bconfig of
+        ResolverSnapshot snapName -> do
+            buildPlan <- loadBuildPlan snapName
+
+            let pkgsNames = map packageNameText $ Map.keys $ bpPackages buildPlan
+            liftIO $ do
+                T.putStrLn (T.concat ["_ALL_: ", T.concat (intersperse " " pkgsNames)])
+                T.putStrLn ""
+
+            let toolsToPackages =
+                    Map.fromList $ concat $ flip map (Map.toList $ bpPackages buildPlan) $
+                        \(pkgName, pkg) ->
+                            map (\exeName -> (exeName, packageNameText pkgName)) $
+                                Set.toList (sdProvidedExes . ppDesc $ pkg)
+
+            allDeps <- withLoadPackage menv $ \loader ->
+                forM (Map.toList $ bpPackages buildPlan) $
+                    \(pkgName, pkg) -> liftIO $ do
+                        let myName = packageNameText pkgName
+                        let exeLib = Set.fromList [CompLibrary, CompExecutable]
+                        let depName (Dependency (PackageName name) _) = T.pack name
+                        pkgInfo <- loader pkgName (ppVersion pkg) Map.empty []
+                        let depNames = catMaybes [M.lookup (ExeName name) toolsToPackages
+                                                 | name <- map depName (packageTools pkgInfo)]
+                        let onlyExeLib (_, v) = not . Set.null $ (diComponents v) `Set.intersection` exeLib
+                        let deps = (map packageNameText . map fst . filter onlyExeLib .
+                                       Map.toList . sdPackages . ppDesc $ pkg) \\ [myName]
+                        T.putStrLn (T.concat [packageNameText pkgName, ": ",
+                                              T.concat . intersperse " " $ deps ++ depNames])
+                        T.putStrLn (T.concat $ ["\t", T.pack cmd,
+                                                " --has-lib ", (T.pack $ show $ packageHasLibrary pkgInfo),
+                                                " --version ", versionText . ppVersion $ pkg,
+                                                " --deps \""] ++ intersperse " " (deps) ++ ["\"",
+                                                " --extra-deps \""] ++ intersperse " " (packageExtraDeps pkgInfo) ++ ["\"",
+                                                " --tools-deps \""] ++ intersperse " " depNames ++ ["\""])
+                        T.putStrLn ""
+                        return deps
+
+            let basePackages = Set.toList $ (Set.fromList (concat allDeps))
+                                            `Set.difference` (Set.fromList pkgsNames)
+            liftIO $ do
+                T.putStrLn (T.concat ["BASE_PACKAGES = ", T.concat . intersperse " " $ basePackages])
+                T.putStrLn (".PHONY: $(BASE_PACKAGES)")
+
         _ -> return ()
 
 -- | Generate a combined HPC report

@@ -86,6 +86,7 @@ data Package =
           ,packageVersion :: !Version                     -- ^ Version of the package
           ,packageFiles :: !GetPackageFiles               -- ^ Get all files of the package.
           ,packageDeps :: !(Map PackageName VersionRange) -- ^ Packages that the package depends on.
+          ,packageExtraDeps :: ![Text]                    -- ^ Extra dependencies.
           ,packageTools :: ![Dependency]                  -- ^ A build tool name.
           ,packageAllDeps :: !(Set PackageName)           -- ^ Original dependencies (not sieved).
           ,packageGhcOptions :: ![Text]                   -- ^ Ghc options used on package.
